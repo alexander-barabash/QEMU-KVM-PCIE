@@ -56,6 +56,10 @@ static Property pci_props[] = {
                     QEMU_PCI_CAP_MULTIFUNCTION_BITNR, false),
     DEFINE_PROP_BIT("command_serr_enable", PCIDevice, cap_present,
                     QEMU_PCI_CAP_SERR_BITNR, true),
+    DEFINE_PROP_BIT("msi", PCIDevice, cap_present,
+                    QEMU_PCI_CAP_MSI_BITNR, false),
+    DEFINE_PROP_BIT("msix", PCIDevice, cap_present,
+                    QEMU_PCI_CAP_MSIX_BITNR, false),
     DEFINE_PROP_END_OF_LIST()
 };
 
