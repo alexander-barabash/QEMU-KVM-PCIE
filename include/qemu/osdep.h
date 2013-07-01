@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 #ifdef __OpenBSD__
 #include <sys/signal.h>
@@ -214,5 +215,17 @@ bool fips_get_state(void);
  * after use.
  */
 char *qemu_get_local_state_pathname(const char *relative_pathname);
+
+typedef struct QemuMappedFileData {
+    char *filename;
+    uint64_t length;
+    uint64_t offset;
+    bool readonly;
+    void *pointer;
+    int fd;
+} QemuMappedFileData;
+
+bool qemu_map_file_data(QemuMappedFileData *data);
+void qemu_unmap_file_data(QemuMappedFileData *data);
 
 #endif
