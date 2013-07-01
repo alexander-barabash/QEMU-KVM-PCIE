@@ -238,6 +238,7 @@ struct PCIDevice {
     /* the following fields are read only */
     PCIBus *bus;
     int32_t devfn;
+    char *slot_name;
     char name[64];
     PCIIORegion io_regions[PCI_NUM_REGIONS];
     AddressSpace bus_master_as;

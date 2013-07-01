@@ -49,6 +49,7 @@ static int pcibus_reset(BusState *qbus);
 
 static Property pci_props[] = {
     DEFINE_PROP_PCI_DEVFN("addr", PCIDevice, devfn, -1),
+    DEFINE_PROP_STRING("slot", PCIDevice, slot_name),
     DEFINE_PROP_STRING("romfile", PCIDevice, romfile),
     DEFINE_PROP_UINT32("rombar",  PCIDevice, rom_bar, 1),
     DEFINE_PROP_BIT("multifunction", PCIDevice, cap_present,
@@ -786,12 +787,47 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     PCIDeviceClass *pc = PCI_DEVICE_GET_CLASS(pci_dev);
     PCIConfigReadFunc *config_read = pc->config_read;
     PCIConfigWriteFunc *config_write = pc->config_write;
+    int index;
 
     if (devfn < 0) {
-        for(devfn = bus->devfn_min ; devfn < ARRAY_SIZE(bus->devices);
+        devfn = 0x100;
+    }
+
+    if (pci_dev->slot_name && *pci_dev->slot_name) {
+        for(index = 0;
+            (index < ARRAY_SIZE(bus->devices) &&
+             (bus->devices[index] == NULL ||
+              bus->devices[index]->slot_name == NULL ||
+              strcmp(bus->devices[index]->slot_name, pci_dev->slot_name)));
+            ++index) {}
+        if (index < ARRAY_SIZE(bus->devices)) {
+            if ((devfn & ~0x7) == 0x100) {
+                /* Only function number was specified in devfn. */
+                devfn = PCI_DEVFN(PCI_SLOT(index), PCI_FUNC(devfn));
+            } else if (PCI_SLOT(index) != PCI_SLOT(devfn)) {
+                error_report("PCI: slot named %s not available for %s,"
+                             " in use by %s",
+                             pci_dev->slot_name,
+                             name, bus->devices[index]->name);
+                return NULL;
+            }
+        }
+    }
+
+    if ((devfn & ~0x7) == 0x100) {
+        for(devfn = bus->devfn_min + PCI_FUNC(devfn);
+            devfn < ARRAY_SIZE(bus->devices);
             devfn += PCI_FUNC_MAX) {
-            if (!bus->devices[devfn])
-                goto found;
+            if (!bus->devices[devfn]) {
+                for (index = 0; index < 8; ++index) {
+                    if (bus->devices[PCI_DEVFN(PCI_SLOT(devfn), index)]) {
+                        break;
+                    }
+                }
+                if (index == 8) {
+                    goto found;
+                }
+            }
         }
         error_report("PCI: no slot/function available for %s, all in use", name);
         return NULL;
