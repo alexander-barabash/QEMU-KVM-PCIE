@@ -2189,6 +2189,15 @@ void cpu_physical_memory_unmap(void *buffer, hwaddr len,
     return address_space_unmap(&address_space_memory, buffer, len, is_write, access_len);
 }
 
+bool is_wrong_endian(enum device_endian endian)
+{
+#if defined(TARGET_WORDS_BIGENDIAN)
+    return (endian == DEVICE_LITTLE_ENDIAN);
+#else
+    return (endian == DEVICE_BIG_ENDIAN);
+#endif
+}
+
 /* warning: addr must be aligned */
 static inline uint32_t ldl_phys_internal(hwaddr addr,
                                          enum device_endian endian)
