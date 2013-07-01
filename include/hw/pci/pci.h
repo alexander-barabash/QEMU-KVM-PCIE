@@ -139,23 +139,31 @@ enum {
 
 #define PCI_NUM_PINS 4 /* A-D */
 
+/* Numbers of bits in cap_present field. */
+enum {
+    QEMU_PCI_CAP_MSI_BITNR = 0,
+    QEMU_PCI_CAP_MSIX_BITNR = 1,
+    QEMU_PCI_CAP_EXPRESS_BITNR = 2,
+    /* multifunction capable device */
+    QEMU_PCI_CAP_MULTIFUNCTION_BITNR = 3,
+    /* command register SERR bit enabled */
+    QEMU_PCI_CAP_SERR_BITNR = 4,
+    /* Standard hot plug controller. */
+    QEMU_PCI_SHPC_BITNR = 5,
+    QEMU_PCI_SLOTID_BITNR = 6,
+};
+
 /* Bits in cap_present field. */
 enum {
-    QEMU_PCI_CAP_MSI = 0x1,
-    QEMU_PCI_CAP_MSIX = 0x2,
-    QEMU_PCI_CAP_EXPRESS = 0x4,
-
+    QEMU_PCI_CAP_MSI = (1 << QEMU_PCI_CAP_MSI_BITNR),
+    QEMU_PCI_CAP_MSIX = (1 << QEMU_PCI_CAP_MSIX_BITNR),
+    QEMU_PCI_CAP_EXPRESS = (1 << QEMU_PCI_CAP_EXPRESS_BITNR),
     /* multifunction capable device */
-#define QEMU_PCI_CAP_MULTIFUNCTION_BITNR        3
     QEMU_PCI_CAP_MULTIFUNCTION = (1 << QEMU_PCI_CAP_MULTIFUNCTION_BITNR),
-
     /* command register SERR bit enabled */
-#define QEMU_PCI_CAP_SERR_BITNR 4
     QEMU_PCI_CAP_SERR = (1 << QEMU_PCI_CAP_SERR_BITNR),
     /* Standard hot plug controller. */
-#define QEMU_PCI_SHPC_BITNR 5
     QEMU_PCI_CAP_SHPC = (1 << QEMU_PCI_SHPC_BITNR),
-#define QEMU_PCI_SLOTID_BITNR 6
     QEMU_PCI_CAP_SLOTID = (1 << QEMU_PCI_SLOTID_BITNR),
 };
 
