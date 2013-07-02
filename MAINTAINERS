@@ -428,11 +428,14 @@ F: hw/pci/devices/host-prep.[hc]
 F: hw/isa/pc87312.[hc]
 
 sPAPR
-M: David Gibson <david@gibson.dropbear.id.au>
 M: Alexander Graf <agraf@suse.de>
 L: qemu-ppc@nongnu.org
 S: Supported
 F: hw/*/spapr*
+F: include/hw/*/spapr*
+F: hw/*/xics*
+F: include/hw/*/xics*
+F: pc-bios/spapr-rtas/*
 
 virtex_ml507
 M: Edgar E. Iglesias <edgar.iglesias@gmail.com>
@@ -608,6 +611,11 @@ M: Amit Shah <amit.shah@redhat.com>
 S: Supported
 F: hw/char/virtio-serial-bus.c
 F: hw/char/virtio-console.c
+
+nvme
+M: Keith Busch <keith.busch@intel.com>
+S: Supported
+F: hw/block/nvme*
 
 Xilinx EDK
 M: Peter Crosthwaite <peter.crosthwaite@petalogix.com>

@@ -511,6 +511,7 @@ static void flush_windows(CPUSPARCState *env)
 
 void cpu_loop(CPUSPARCState *env)
 {
+    CPUState *cs = CPU(sparc_env_get_cpu(env));
     int trapnr, ret, syscall_nr;
     //target_siginfo_t info;
 
@@ -659,7 +660,7 @@ void cpu_loop(CPUSPARCState *env)
         badtrap:
 #endif
             printf ("Unhandled trap: 0x%x\n", trapnr);
-            cpu_dump_state(env, stderr, fprintf, 0);
+            cpu_dump_state(cs, stderr, fprintf, 0);
             exit (1);
         }
         process_pending_signals (env);
@@ -670,8 +671,8 @@ void cpu_loop(CPUSPARCState *env)
 
 static void usage(void)
 {
-    printf("qemu-" TARGET_ARCH " version " QEMU_VERSION ", Copyright (c) 2003-2008 Fabrice Bellard\n"
-           "usage: qemu-" TARGET_ARCH " [options] program [arguments...]\n"
+    printf("qemu-" TARGET_NAME " version " QEMU_VERSION ", Copyright (c) 2003-2008 Fabrice Bellard\n"
+           "usage: qemu-" TARGET_NAME " [options] program [arguments...]\n"
            "BSD CPU emulator (compiled for %s emulation)\n"
            "\n"
            "Standard options:\n"
@@ -706,7 +707,7 @@ static void usage(void)
            "Note that if you provide several changes to single variable\n"
            "last change will stay in effect.\n"
            ,
-           TARGET_ARCH,
+           TARGET_NAME,
            interp_prefix,
            x86_stack_size);
     exit(1);

@@ -119,7 +119,7 @@ static void finish_read_pci_config(sPAPREnvironment *spapr, uint64_t buid,
     rtas_st(rets, 1, val);
 }
 
-static void rtas_ibm_read_pci_config(sPAPREnvironment *spapr,
+static void rtas_ibm_read_pci_config(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                      uint32_t token, uint32_t nargs,
                                      target_ulong args,
                                      uint32_t nret, target_ulong rets)
@@ -139,7 +139,7 @@ static void rtas_ibm_read_pci_config(sPAPREnvironment *spapr,
     finish_read_pci_config(spapr, buid, addr, size, rets);
 }
 
-static void rtas_read_pci_config(sPAPREnvironment *spapr,
+static void rtas_read_pci_config(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                  uint32_t token, uint32_t nargs,
                                  target_ulong args,
                                  uint32_t nret, target_ulong rets)
@@ -185,7 +185,7 @@ static void finish_write_pci_config(sPAPREnvironment *spapr, uint64_t buid,
     rtas_st(rets, 0, 0);
 }
 
-static void rtas_ibm_write_pci_config(sPAPREnvironment *spapr,
+static void rtas_ibm_write_pci_config(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                       uint32_t token, uint32_t nargs,
                                       target_ulong args,
                                       uint32_t nret, target_ulong rets)
@@ -206,7 +206,7 @@ static void rtas_ibm_write_pci_config(sPAPREnvironment *spapr,
     finish_write_pci_config(spapr, buid, addr, size, val, rets);
 }
 
-static void rtas_write_pci_config(sPAPREnvironment *spapr,
+static void rtas_write_pci_config(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                   uint32_t token, uint32_t nargs,
                                   target_ulong args,
                                   uint32_t nret, target_ulong rets)
@@ -277,7 +277,7 @@ static void spapr_msi_setmsg(PCIDevice *pdev, hwaddr addr,
     }
 }
 
-static void rtas_ibm_change_msi(sPAPREnvironment *spapr,
+static void rtas_ibm_change_msi(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                 uint32_t token, uint32_t nargs,
                                 target_ulong args, uint32_t nret,
                                 target_ulong rets)
@@ -374,7 +374,8 @@ static void rtas_ibm_change_msi(sPAPREnvironment *spapr,
     trace_spapr_pci_rtas_ibm_change_msi(func, req_num);
 }
 
-static void rtas_ibm_query_interrupt_source_number(sPAPREnvironment *spapr,
+static void rtas_ibm_query_interrupt_source_number(PowerPCCPU *cpu,
+                                                   sPAPREnvironment *spapr,
                                                    uint32_t token,
                                                    uint32_t nargs,
                                                    target_ulong args,
@@ -506,12 +507,11 @@ static const MemoryRegionOps spapr_msi_ops = {
 /*
  * PHB PCI device
  */
-static DMAContext *spapr_pci_dma_context_fn(PCIBus *bus, void *opaque,
-                                            int devfn)
+static AddressSpace *spapr_pci_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
     sPAPRPHBState *phb = opaque;
 
-    return phb->dma;
+    return &phb->iommu_as;
 }
 
 static int spapr_phb_init(SysBusDevice *s)
@@ -646,12 +646,15 @@ static int spapr_phb_init(SysBusDevice *s)
 
     sphb->dma_window_start = 0;
     sphb->dma_window_size = 0x40000000;
-    sphb->dma = spapr_tce_new_dma_context(sphb->dma_liobn, sphb->dma_window_size);
-    if (!sphb->dma) {
+    sphb->tcet = spapr_tce_new_table(sphb->dma_liobn, sphb->dma_window_size);
+    if (!sphb->tcet) {
         fprintf(stderr, "Unable to create TCE table for %s\n", sphb->dtbusname);
         return -1;
     }
-    pci_setup_iommu(bus, spapr_pci_dma_context_fn, sphb);
+    address_space_init(&sphb->iommu_as, spapr_tce_get_iommu(sphb->tcet),
+                       sphb->dtbusname);
+
+    pci_setup_iommu(bus, spapr_pci_dma_iommu, sphb);
 
     QLIST_INSERT_HEAD(&spapr->phbs, sphb, list);
 
@@ -676,7 +679,7 @@ static void spapr_phb_reset(DeviceState *qdev)
     sPAPRPHBState *sphb = SPAPR_PCI_HOST_BRIDGE(s);
 
     /* Reset the IOMMU state */
-    spapr_tce_reset(sphb->dma);
+    spapr_tce_reset(sphb->tcet);
 }
 
 static Property spapr_phb_properties[] = {

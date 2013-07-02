@@ -34,9 +34,7 @@
 #include "hw/ppc/spapr_vio.h"
 #include "hw/ppc/xics.h"
 
-#ifdef CONFIG_FDT
 #include <libfdt.h>
-#endif /* CONFIG_FDT */
 
 /* #define DEBUG_SPAPR */
 
@@ -94,7 +92,6 @@ VIOsPAPRDevice *spapr_vio_find_by_reg(VIOsPAPRBus *bus, uint32_t reg)
     return NULL;
 }
 
-#ifdef CONFIG_FDT
 static int vio_make_devnode(VIOsPAPRDevice *dev,
                             void *fdt)
 {
@@ -145,7 +142,7 @@ static int vio_make_devnode(VIOsPAPRDevice *dev,
         }
     }
 
-    ret = spapr_tcet_dma_dt(fdt, node_off, "ibm,my-dma-window", dev->dma);
+    ret = spapr_tcet_dma_dt(fdt, node_off, "ibm,my-dma-window", dev->tcet);
     if (ret < 0) {
         return ret;
     }
@@ -159,7 +156,6 @@ static int vio_make_devnode(VIOsPAPRDevice *dev,
 
     return node_off;
 }
-#endif /* CONFIG_FDT */
 
 /*
  * CRQ handling
@@ -319,13 +315,14 @@ int spapr_vio_send_crq(VIOsPAPRDevice *dev, uint8_t *crq)
 
 static void spapr_vio_quiesce_one(VIOsPAPRDevice *dev)
 {
-    if (dev->dma) {
-        spapr_tce_reset(dev->dma);
+    if (dev->tcet) {
+        spapr_tce_reset(dev->tcet);
     }
     free_crq(dev);
 }
 
-static void rtas_set_tce_bypass(sPAPREnvironment *spapr, uint32_t token,
+static void rtas_set_tce_bypass(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                                uint32_t token,
                                 uint32_t nargs, target_ulong args,
                                 uint32_t nret, target_ulong rets)
 {
@@ -345,17 +342,18 @@ static void rtas_set_tce_bypass(sPAPREnvironment *spapr, uint32_t token,
         return;
     }
 
-    if (!dev->dma) {
+    if (!dev->tcet) {
         rtas_st(rets, 0, -3);
         return;
     }
 
-    spapr_tce_set_bypass(dev->dma, !!enable);
+    spapr_tce_set_bypass(dev->tcet, !!enable);
 
     rtas_st(rets, 0, 0);
 }
 
-static void rtas_quiesce(sPAPREnvironment *spapr, uint32_t token,
+static void rtas_quiesce(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                         uint32_t token,
                          uint32_t nargs, target_ulong args,
                          uint32_t nret, target_ulong rets)
 {
@@ -457,7 +455,8 @@ static int spapr_vio_busdev_init(DeviceState *qdev)
 
     if (pc->rtce_window_size) {
         uint32_t liobn = SPAPR_VIO_BASE_LIOBN | dev->reg;
-        dev->dma = spapr_tce_new_dma_context(liobn, pc->rtce_window_size);
+        dev->tcet = spapr_tce_new_table(liobn, pc->rtce_window_size);
+        address_space_init(&dev->as, spapr_tce_get_iommu(dev->tcet), qdev->id);
     }
 
     return pc->init(dev);
@@ -570,7 +569,6 @@ static void spapr_vio_register_types(void)
 
 type_init(spapr_vio_register_types)
 
-#ifdef CONFIG_FDT
 static int compare_reg(const void *p1, const void *p2)
 {
     VIOsPAPRDevice const *dev1, *dev2;
@@ -655,4 +653,3 @@ int spapr_populate_chosen_stdout(void *fdt, VIOsPAPRBus *bus)
 
     return ret;
 }
-#endif /* CONFIG_FDT */
