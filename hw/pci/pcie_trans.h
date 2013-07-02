@@ -430,10 +430,10 @@ uint8_t pcie_trans_get_completion_tag(const uint8_t *trans_data)
 }
 
 static inline void pcie_trans_set_completer_id(uint8_t *trans_data,
-                                               uint16_t requester_id)
+                                               uint16_t completer_id)
 {
-    trans_data[5] = (uint8_t)(requester_id);
-    trans_data[4] = (uint8_t)(requester_id >> 8);
+    trans_data[5] = (uint8_t)(completer_id);
+    trans_data[4] = (uint8_t)(completer_id >> 8);
 }
 
 static inline
