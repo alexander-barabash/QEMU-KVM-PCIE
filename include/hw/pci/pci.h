@@ -251,6 +251,8 @@ struct PCIDevice {
     PCIIORegion io_regions[PCI_NUM_REGIONS];
     AddressSpace bus_master_as;
     MemoryRegion bus_master_enable_region;
+    AddressSpace bus_master_io_as;
+    MemoryRegion bus_master_io_enable_region;
 
     /* do not access the following fields */
     PCIConfigReadFunc *config_read;
@@ -650,6 +652,11 @@ static inline uint32_t pci_config_size(const PCIDevice *d)
 static inline AddressSpace *pci_get_address_space(PCIDevice *dev)
 {
     return &dev->bus_master_as;
+}
+
+static inline AddressSpace *pci_get_io_address_space(PCIDevice *dev)
+{
+    return &dev->bus_master_io_as;
 }
 
 static inline int pci_dma_rw(PCIDevice *dev, dma_addr_t addr,

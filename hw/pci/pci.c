@@ -399,6 +399,9 @@ static int get_pci_config_device(QEMUFile *f, void *pv, size_t size)
     memory_region_set_enabled(&s->bus_master_enable_region,
                               pci_get_word(s->config + PCI_COMMAND)
                               & PCI_COMMAND_MASTER);
+    memory_region_set_enabled(&s->bus_master_io_enable_region,
+                              pci_get_word(s->config + PCI_COMMAND)
+                              & PCI_COMMAND_MASTER);
 
     g_free(config);
     return 0;
@@ -793,6 +796,7 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     PCIConfigWriteFunc *config_write = pc->config_write;
     int index;
     AddressSpace *dma_as;
+    AddressSpace *dma_io_as;
 
     if (devfn < 0) {
         devfn = 0x100;
@@ -857,6 +861,16 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     address_space_init(&pci_dev->bus_master_as, &pci_dev->bus_master_enable_region,
                        name);
 
+    /* FIXME: inherit I/O region from bus creator */
+    dma_io_as = &address_space_io;
+
+    memory_region_init_alias(&pci_dev->bus_master_io_enable_region,
+                             "bus master IO", dma_io_as->root, 0,
+                             memory_region_size(dma_io_as->root));
+    memory_region_set_enabled(&pci_dev->bus_master_io_enable_region, false);
+    address_space_init(&pci_dev->bus_master_io_as,
+                       &pci_dev->bus_master_io_enable_region, name);
+
     pci_dev->devfn = devfn;
     pstrcpy(pci_dev->name, sizeof(pci_dev->name), name);
     pci_dev->irq_state = 0;
@@ -912,6 +926,9 @@ static void do_pci_unregister_device(PCIDevice *pci_dev)
 
     address_space_destroy(&pci_dev->bus_master_as);
     memory_region_destroy(&pci_dev->bus_master_enable_region);
+
+    address_space_destroy(&pci_dev->bus_master_io_as);
+    memory_region_destroy(&pci_dev->bus_master_io_enable_region);
 }
 
 static void pci_unregister_io_regions(PCIDevice *pci_dev)
@@ -1197,6 +1214,9 @@ void pci_default_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int l)
     if (range_covers_byte(addr, l, PCI_COMMAND)) {
         pci_update_irq_disabled(d, was_irq_disabled);
         memory_region_set_enabled(&d->bus_master_enable_region,
+                                  pci_get_word(d->config + PCI_COMMAND)
+                                    & PCI_COMMAND_MASTER);
+        memory_region_set_enabled(&d->bus_master_io_enable_region,
                                   pci_get_word(d->config + PCI_COMMAND)
                                     & PCI_COMMAND_MASTER);
     }
