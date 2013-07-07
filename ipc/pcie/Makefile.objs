@@ -1,0 +1,3 @@
+common-obj-y += ipc_pcie_sizer.o
+common-obj-y += downstream_pcie_connection.o
+
