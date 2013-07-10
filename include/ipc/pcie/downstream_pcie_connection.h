@@ -19,12 +19,45 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "ipc/ipc_connection.h"
 #include "hw/pci/pci.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 typedef struct DownstreamPCIeConnection DownstreamPCIeConnection;
 
+struct DownstreamPCIeConnection {
+    IPCConnection connection;
+    uint32_t pci_bus_num;
+    AddressSpace *dma_as;
+    AddressSpace *io_as;
+    GHashTable *requesters_table;
+};
+
 DownstreamPCIeConnection *init_pcie_downstream_ipc(const char *socket_path,
                                                    bool use_abstract_path,
                                                    PCIDevice *pci_dev);
+
+void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
+                                  PCIDevice *pci_dev,
+                                  hwaddr addr, uint64_t val, unsigned size);
+
+uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
+                                     PCIDevice *pci_dev,
+                                     hwaddr addr, unsigned size);
+
+void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
+                              PCIDevice *pci_dev,
+                              hwaddr addr, uint32_t val, unsigned size);
+
+uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
+                                 PCIDevice *pci_dev,
+                                 hwaddr addr, unsigned size);
+
+void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
+                                  PCIDevice *pci_dev,
+                                  uint32_t addr, uint32_t val, unsigned size);
+
+uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
+                                     PCIDevice *pci_dev,
+                                     uint32_t addr, unsigned size);

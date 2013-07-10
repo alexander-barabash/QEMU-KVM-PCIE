@@ -55,6 +55,11 @@ static inline IPCPacket *ipc_packet_from_data(uint8_t *data)
     return ((IPCPacket *)data) - 1;
 }
 
+static inline void free_data_ipc_packet(uint8_t *data)
+{
+    free(ipc_packet_from_data(data));
+}
+
 void init_ipc_connection(IPCConnection *connection,
                          const char *connection_kind,
                          IPCSizer *ipc_sizer,

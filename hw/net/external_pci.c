@@ -20,16 +20,12 @@
  */
 
 
-#include "hw/hw.h"
+#include "config-host.h"
 #include "hw/pci/pci.h"
-#include "ipc/pcie/pcie_trans.h"
 #include "net/net.h"
-#include "net/checksum.h"
-#include "hw/loader.h"
-#include "sysemu/sysemu.h"
-#include "sysemu/dma.h"
 #include "qemu/osdep.h"
 #include "qemu/range.h"
+#include "qemu/error-report.h"
 #include "ipc/pcie/downstream_pcie_connection.h"
 
 #define EXTERNAL_PCI_DEBUG
@@ -63,12 +59,15 @@ enum {
     MEM_64BIT_FLAG_NR,
 };
 
+typedef struct ExternalPCIState ExternalPCIState;
 typedef struct BARInfo {
     char *name;
     uint32_t flags;
     QemuMappedFileData file_data;
     MemoryRegion region;
     MemoryRegionOps ops;
+    ExternalPCIState *dev;
+    pcibus_t base_address;
     bool need_flush;
 } BARInfo;
 
@@ -100,7 +99,7 @@ bar_update_size(BARInfo *bar_info)
         return;
     }
     /* TODO: get the file's size. */
-    /* TODO: Take care it is a powr of two. */
+    /* TODO: Take care it is a power of two. */
 }
 
 static inline bool
@@ -172,12 +171,13 @@ bar_endianness(BARInfo *bar_info)
 
 #define PCI_NUM_BARS (PCI_NUM_REGIONS - 1)
 
-typedef struct ExternalPCIState_st {
+typedef struct ExternalPCIState {
     PCIDevice dev;
     NICState *nic;
     NICConf conf;
 
-    BARInfo bar_info[PCI_NUM_BARS];
+    DownstreamPCIeConnection *ipc_connection;
+    BARInfo bar_info[PCI_NUM_REGIONS];
 
     uint32_t flags;
     char *ipc_socket_path;
@@ -239,12 +239,13 @@ pci_external_uninit(PCIDevice *dev)
 }
 
 static uint32_t
-external_pci_config_read(PCIDevice *pci_dev, uint32_t address, int len)
+external_pci_config_read(PCIDevice *dev, uint32_t address, int len)
 {
+    ExternalPCIState *d = DO_UPCAST(ExternalPCIState, dev, dev);
     DBGOUT(GENERAL, "external_pci_config_read addr=0x%X len=%d",
            address, len);
-    /* TODO: call the peer. */
-    return 0;
+    return read_downstream_pcie_config(d->ipc_connection,
+                                       dev, address, len);
 }
 
 static uint16_t
@@ -322,20 +323,23 @@ static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
     }
 }
 
-static void pci_update_bar_mapping(PCIDevice *d, uint16_t pci_command,
+static void pci_update_bar_mapping(PCIDevice *dev, uint16_t pci_command,
                                    int index)
 {
+    ExternalPCIState *d = DO_UPCAST(ExternalPCIState, dev, dev);
     bool is_io, is_64bit;
-    PCIIORegion *r = &d->io_regions[index];
+    PCIIORegion *r = &dev->io_regions[index];
+    pcibus_t base_address;
 
     /* this region isn't registered */
     if (!r->size) {
         return;
     }
 
-    pci_update_region_mapping(d, r,
-                              retrieve_pci_base_address(d, index, pci_command,
-                                                        &is_io, &is_64bit));
+    base_address = retrieve_pci_base_address(dev, index, pci_command,
+                                             &is_io, &is_64bit);
+    d->bar_info[index].base_address = base_address;
+    pci_update_region_mapping(dev, r, base_address);
 }
 
 static void pci_update_rom_mapping(PCIDevice *d)
@@ -361,37 +365,39 @@ static void pci_update_all_bar_mappings(PCIDevice *d, uint16_t pci_command)
 }
 
 static void
-external_pci_config_write(PCIDevice *pci_dev, uint32_t addr, uint32_t val,
+external_pci_config_write(PCIDevice *dev, uint32_t addr, uint32_t val,
                           int l)
 {
+    ExternalPCIState *d = DO_UPCAST(ExternalPCIState, dev, dev);
     bool covers_pci_command = range_covers_byte(addr, l, PCI_COMMAND);
 #if 0
     bool was_irq_disabled = 0;
     if (covers_pci_command) {
         was_irq_disabled =
-            (retrieve_pci_command(pci_dev) & PCI_COMMAND_INTX_DISABLE) != 0;
+            (retrieve_pci_command(dev) & PCI_COMMAND_INTX_DISABLE) != 0;
     }
 #endif
 
-    /* TODO: call the peer HERE. */
+    write_downstream_pcie_config(d->ipc_connection,
+                                 dev, addr, val, l);
 
     if (covers_pci_command) {
-        uint16_t pci_command = retrieve_pci_command(pci_dev);
-        pci_update_all_bar_mappings(pci_dev, pci_command);
+        uint16_t pci_command = retrieve_pci_command(dev);
+        pci_update_all_bar_mappings(dev, pci_command);
 #if 0
         pci_update_irq_disabled(d, was_irq_disabled);
 #endif
-        memory_region_set_enabled(&pci_dev->bus_master_enable_region,
+        memory_region_set_enabled(&dev->bus_master_enable_region,
                                   pci_command & PCI_COMMAND_MASTER);
-        memory_region_set_enabled(&pci_dev->bus_master_io_enable_region,
+        memory_region_set_enabled(&dev->bus_master_io_enable_region,
                                   pci_command & PCI_COMMAND_MASTER);
     } else if (addr >= PCI_BASE_ADDRESS_0) {
         int index = (addr - PCI_BASE_ADDRESS_0) / 4;
         if (index < PCI_NUM_BARS) {
-            pci_update_bar_mapping(pci_dev, retrieve_pci_command(pci_dev),
+            pci_update_bar_mapping(dev, retrieve_pci_command(dev),
                                    index);
         } else if (index == (PCI_ROM_ADDRESS - PCI_BASE_ADDRESS_0) / 4) {
-            pci_update_rom_mapping(pci_dev);
+            pci_update_rom_mapping(dev);
         }
     }
 
@@ -402,21 +408,27 @@ external_pci_config_write(PCIDevice *pci_dev, uint32_t addr, uint32_t val,
 static inline uint64_t
 external_pci_read_direct(void *opaque, hwaddr addr, unsigned size)
 {
-    uint8_t *pointer = opaque;
-    pointer += addr;
+    uintptr_t base = (uintptr_t)opaque;
+    void *p = (void *)(base + addr);
+    union {
+        uint8_t byte;
+        uint16_t word;
+        uint32_t dword;
+        uint64_t qword;
+    } *pointer = p;
 
     DBGOUT(GENERAL, "external_pci_read_direct addr=0x%llX size=%d",
            (unsigned long long)addr, size);
 
     switch (size) {
     case 1:
-        return *pointer;
+        return pointer->byte;
     case 2:
-        return *(uint16_t *)pointer;
+        return pointer->word;
     case 4:
-        return *(uint32_t *)pointer;
+        return pointer->dword;
     case 8:
-        return *(uint64_t *)pointer;
+        return pointer->qword;
     default:
         abort();
     }
@@ -428,24 +440,30 @@ static void
 external_pci_write_direct(void *opaque, hwaddr addr, uint64_t val,
                           unsigned size)
 {
-    uint8_t *pointer = opaque;
-    pointer += addr;
+    uintptr_t base = (uintptr_t)opaque;
+    void *p = (void *)(base + addr);
+    union {
+        uint8_t byte;
+        uint16_t word;
+        uint32_t dword;
+        uint64_t qword;
+    } *pointer = p;
     
     DBGOUT(GENERAL, "external_pci_write_direct addr=0x%llX val=0x%llX size=%d",
            (unsigned long long)addr, (unsigned long long)val, size);
 
     switch (size) {
     case 1:
-        *pointer = (uint8_t)val;
+        pointer->byte = val;
         break;
     case 2:
-        *(uint16_t *)pointer = (uint16_t)val;
+        pointer->word = val;
         break;
     case 4:
-        *(uint32_t *)pointer = (uint32_t)val;
+        pointer->dword = val;
         break;
     case 8:
-        *(uint64_t *)pointer = (uint64_t)val;
+        pointer->qword = val;
         break;
     default:
         abort();
@@ -461,16 +479,19 @@ external_pci_read_memory(void *opaque, hwaddr addr, unsigned size)
            (unsigned long long)addr, size);
 
     if (bar_info->need_flush) {
-        /* TODO: call the peer. */
         bar_info->need_flush = false;
+        return read_downstream_pcie_memory(bar_info->dev->ipc_connection,
+                                           &bar_info->dev->dev,
+                                           bar_info->base_address + addr,
+                                           size);
+    } else {
+        return external_pci_read_direct(bar_info->file_data.pointer, addr, size);
     }
-
-    return external_pci_read_direct(bar_info->file_data.pointer, addr, size);
 }
 
 static void
 external_pci_write_memory(void *opaque, hwaddr addr, uint64_t val,
-                        unsigned size)
+                          unsigned size)
 {
     BARInfo *bar_info = opaque;
     
@@ -489,7 +510,10 @@ external_pci_write_memory(void *opaque, hwaddr addr, uint64_t val,
     default:
         abort();
     }
-    /* TODO: call the peer one-way. */
+    write_downstream_pcie_memory(bar_info->dev->ipc_connection,
+                                 &bar_info->dev->dev,
+                                 bar_info->base_address + addr,
+                                 val, size);
     bar_info->need_flush = true;
 }
 
@@ -497,26 +521,14 @@ static uint64_t
 external_pci_read_mmio(void *opaque, hwaddr addr, unsigned size)
 {
     BARInfo *bar_info = opaque;
-    (void)bar_info;
 
     DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%llX size=%d",
            (unsigned long long)addr, size);
 
-    switch (size) {
-    case 1:
-        break;
-    case 2:
-        break;
-    case 4:
-        break;
-    case 8:
-        break;
-    default:
-        abort();
-    }
-    /* TODO: call the peer. */
-
-    return 0;
+    return read_downstream_pcie_memory(bar_info->dev->ipc_connection,
+                                       &bar_info->dev->dev,
+                                       bar_info->base_address + addr,
+                                       size);
 }
 
 static void
@@ -524,48 +536,28 @@ external_pci_write_mmio(void *opaque, hwaddr addr, uint64_t val,
                         unsigned size)
 {
     BARInfo *bar_info = opaque;
-    (void)bar_info;
     
     DBGOUT(GENERAL, "external_pci_write_mmio addr=0x%llX val=0x%llX size=%d",
            (unsigned long long)addr, (unsigned long long)val, size);
 
-    switch (size) {
-    case 1:
-        break;
-    case 2:
-        break;
-    case 4:
-        break;
-    case 8:
-        break;
-    default:
-        abort();
-    }
-    /* TODO: call the peer one-way. */
+    write_downstream_pcie_memory(bar_info->dev->ipc_connection,
+                                 &bar_info->dev->dev,
+                                 bar_info->base_address + addr,
+                                 val, size);
 }
 
 static uint64_t
 external_pci_read_io(void *opaque, hwaddr addr, unsigned size)
 {
     BARInfo *bar_info = opaque;
-    (void)bar_info;
 
     DBGOUT(GENERAL, "external_pci_read_io addr=0x%llX size=%d",
            (unsigned long long)addr, size);
 
-    switch (size) {
-    case 1:
-        break;
-    case 2:
-        break;
-    case 4:
-        break;
-    default:
-        abort();
-    }
-    /* TODO: call the peer. */
-
-    return 0;
+    return read_downstream_pcie_io(bar_info->dev->ipc_connection,
+                                   &bar_info->dev->dev,
+                                   bar_info->base_address + addr,
+                                   size);
 }
 
 static void
@@ -573,22 +565,14 @@ external_pci_write_io(void *opaque, hwaddr addr, uint64_t val,
                         unsigned size)
 {
     BARInfo *bar_info = opaque;
-    (void)bar_info;
     
     DBGOUT(GENERAL, "external_pci_write_io addr=0x%llX val=0x%llX size=%d",
            (unsigned long long)addr, (unsigned long long)val, size);
 
-    switch (size) {
-    case 1:
-        break;
-    case 2:
-        break;
-    case 4:
-        break;
-    default:
-        abort();
-    }
-    /* TODO: call the peer. */
+    write_downstream_pcie_io(bar_info->dev->ipc_connection,
+                             &bar_info->dev->dev,
+                             bar_info->base_address + addr,
+                             val, size);
 }
 
 static int pci_external_init(PCIDevice *pci_dev)
@@ -601,33 +585,44 @@ static int pci_external_init(PCIDevice *pci_dev)
     bool upper_bar = false;
     int i;
 
-    init_pcie_downstream_ipc(d->ipc_socket_path,
-                             d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR),
-                             pci_dev);
+    d->ipc_connection =
+        init_pcie_downstream_ipc(d->ipc_socket_path,
+                                 d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR),
+                                 pci_dev);
+    if (d->ipc_connection == NULL) {
+        return -1;
+    }
 
     for (i = 0; i < PCI_NUM_BARS; ++i, ++bar_info, ++io_region) {
+        bar_info->dev = d;
         bar_update_size(bar_info);
         if (upper_bar) {
             upper_bar = false;
             if (bar_info->flags != 0) {
-                /* Report error. */
+                error_report("Attempt to use PCI bar %d twice for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
             if (bar_size(bar_info) != 0) {
-                /* Report error. */
+                error_report("Attempt to use PCI bar %d twice for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
         } else if (bar_size(bar_info) == 0) {
             if (bar_info->flags == 0) {
                 continue;
             } else {
-                /* Report error. */
+                error_report("Size of PCI bar %d unspecified for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
         }
 
         if (!bar_size_power_of_two(bar_info)) {
-            /* Report error. */
+            error_report("Size of PCI bar %d (%" PRIu64 ")"
+                         " is not a power of two"
+                         " for device %s\n",
+                         i, bar_size(bar_info), pci_dev->name);
             return -1;
         }
 
@@ -639,15 +634,20 @@ static int pci_external_init(PCIDevice *pci_dev)
         
         if (bar_is_io(bar_info)) {
             if (bar_is_ram(bar_info)) {
-                /* Report error. */
+                error_report("I/O PCI bar %d specified as RAM for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
             if (bar_prefetchable(bar_info)) {
-                /* Report error. */
+                error_report("I/O PCI bar %d specified as prefetchable"
+                             " for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
             if (bar_is_64bit(bar_info)) {
-                /* Report error. */
+                error_report("I/O PCI bar %d specified as 64-bit"
+                             " for device %s\n",
+                             i, pci_dev->name);
                 return -1;
             }
             io_region->type = PCI_BASE_ADDRESS_SPACE_IO;
@@ -656,14 +656,18 @@ static int pci_external_init(PCIDevice *pci_dev)
             io_region->type = PCI_BASE_ADDRESS_SPACE_MEMORY;
             if (bar_is_64bit(bar_info)) {
                 if (i + 1 >= PCI_NUM_BARS) {
-                    /* Report error. */
+                    error_report("Last PCI bar %d cannot be 64-bit"
+                                 " for device %s\n",
+                                 i, pci_dev->name);
                     return -1;
                 }
                 upper_bar = true;
                 io_region->type |= PCI_BASE_ADDRESS_MEM_TYPE_64;
             } else {
                 if (bar_size(bar_info) > 0xFFFFFFFFu) {
-                    /* Report error. */
+                    error_report("Size of 32-bit PCI bar %d (%" PRIu64 ")"
+                                 " cannot be 64-bit for device %s\n",
+                                 i, bar_size(bar_info), pci_dev->name);
                     return -1;
                 }
                 io_region->type |= PCI_BASE_ADDRESS_MEM_TYPE_32;
@@ -672,8 +676,9 @@ static int pci_external_init(PCIDevice *pci_dev)
             if (bar_prefetchable(bar_info) || bar_is_ram(bar_info)) {
                 if(bar_file(bar_info) &&
                    !qemu_map_file_data(&bar_info->file_data)) {
-                    DBGOUT(GENERAL, "PCI bar configuration failed");
-                    /* Report error. */
+                    error_report("Cannot map file \"%s\" for PCI bar %d"
+                                 " for device %s\n",
+                                 bar_file(bar_info), i, pci_dev->name);
                     return -1;
                 }
                 io_region->type |= PCI_BASE_ADDRESS_MEM_PREFETCH;
@@ -696,12 +701,11 @@ static int pci_external_init(PCIDevice *pci_dev)
 
             ops->endianness = bar_endianness(bar_info);
             
+            ops->valid.min_access_size = 1;
             if (bar_is_io(bar_info)) {
-                ops->valid.min_access_size = 4;
                 ops->valid.max_access_size = 4;
             } else if(bar_is_ram(bar_info) ||
                       bar_prefetchable(bar_info)) {
-                ops->valid.min_access_size = 1;
                 ops->valid.max_access_size = 8;
             }
 

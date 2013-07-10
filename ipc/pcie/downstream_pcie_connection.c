@@ -19,69 +19,271 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "config-host.h"
 #include "ipc/pcie/downstream_pcie_connection.h"
-#include "ipc/ipc_connection.h"
+#include "ipc/pcie/requesters_table.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/pcie/ipc_pcie_sizer.h"
 #include "ipc/pcie/pcie_trans.h"
 #include "ipc/pcie/pcie_trans_decoded.h"
 #include "ipc/pcie/pcie_trans_encode.h"
+#include "qemu/error-report.h"
 #include <glib.h>
 
-struct DownstreamPCIeConnection {
-    IPCConnection connection;
-    uint32_t pci_bus_num;
-    AddressSpace *dma_as;
-    AddressSpace *io_as;
-};
+void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
+                                  PCIDevice *pci_dev,
+                                  hwaddr addr, uint64_t val, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    union {
+        uint8_t bytes[8];
+        uint64_t val;
+    } data;
+    data.val = val;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return;
+    }
+    send_ipc_pcie_memory_write_request(&connection->connection.channel,
+                                       requester_id,
+                                       tag,
+                                       addr,
+                                       size,
+                                       data.bytes);
+    pcie_request_done(request);
+}
 
-static uint8_t root_completer_id(DownstreamPCIeConnection *ipc_data)
+uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
+                                     PCIDevice *pci_dev,
+                                     hwaddr addr, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    PCIE_CompletionDecoded decoded;
+    union {
+        uint8_t bytes[8];
+        uint64_t val;
+    } data;
+    data.val = 0;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return 0;
+    }
+    send_ipc_pcie_memory_read_request(&connection->connection.channel,
+                                      requester_id,
+                                      tag,
+                                      addr,
+                                      size);
+    wait_on_pcie_request(request);
+    decode_completion(request->transaction, &decoded);
+    if (size > 0) {
+        memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
+    }
+    pcie_request_done(request);
+    return data.val;
+}
+
+void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
+                              PCIDevice *pci_dev,
+                              hwaddr addr, uint32_t val, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    union {
+        uint8_t bytes[4];
+        uint32_t val;
+    } data;
+    data.val = val;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return;
+    }
+    send_ipc_pcie_io_write_request(&connection->connection.channel,
+                                   requester_id,
+                                   tag,
+                                   addr,
+                                   size,
+                                   data.bytes);
+    wait_on_pcie_request(request);
+    pcie_request_done(request);
+}
+
+uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
+                                 PCIDevice *pci_dev,
+                                 hwaddr addr, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    PCIE_CompletionDecoded decoded;
+    union {
+        uint8_t bytes[4];
+        uint32_t val;
+    } data;
+    data.val = 0;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return 0;
+    }
+    send_ipc_pcie_memory_read_request(&connection->connection.channel,
+                                      requester_id,
+                                      tag,
+                                      addr,
+                                      size);
+    wait_on_pcie_request(request);
+    decode_completion(request->transaction, &decoded);
+    if (size > 0) {
+        memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
+    }
+    pcie_request_done(request);
+    return data.val;
+}
+
+void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
+                                  PCIDevice *pci_dev,
+                                  uint32_t addr, uint32_t val, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    union {
+        uint8_t bytes[4];
+        uint32_t val;
+    } data;
+    data.val = val;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return;
+    }
+    send_ipc_pcie_config_write_request(&connection->connection.channel,
+                                       /* is_type1 */ true,
+                                       requester_id,
+                                       tag,
+                                       pci_bus_num(pci_dev->bus),
+                                       pci_dev->devfn >> 3,
+                                       pci_dev->devfn & 7,
+                                       addr,
+                                       size,
+                                       data.bytes);
+    wait_on_pcie_request(request);
+    pcie_request_done(request);
+}
+
+uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
+                                     PCIDevice *pci_dev,
+                                     uint32_t addr, unsigned size)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    PCIE_CompletionDecoded decoded;
+    union {
+        uint8_t bytes[4];
+        uint32_t val;
+    } data;
+    data.val = 0;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return 0;
+    }
+    send_ipc_pcie_config_read_request(&connection->connection.channel,
+                                      /* is_type1 */ true,
+                                      requester_id,
+                                      tag,
+                                      pci_bus_num(pci_dev->bus),
+                                      pci_dev->devfn >> 3,
+                                      pci_dev->devfn & 7,
+                                      addr,
+                                      size);
+    wait_on_pcie_request(request);
+    decode_completion(request->transaction, &decoded);
+    if (size > 0) {
+        memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
+    }
+    pcie_request_done(request);
+    return data.val;
+}
+
+static uint16_t root_completer_id(DownstreamPCIeConnection *connection)
 {
     /* TODO: maybe find out the completer's devfn somehow. */
     uint32_t devfn = 0;
-    return (ipc_data->pci_bus_num << 8) | (devfn & 0xFF);
+    return (connection->pci_bus_num << 8) | (devfn & 0xFF);
 }
 
-static bool handle_completion(void *transaction, DownstreamPCIeConnection *ipc_data)
+static bool handle_completion(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_CompletionDecoded decoded;
+    PCIeRequest *request;
     decode_completion(transaction, &decoded);
-    /* TODO */
-    free(ipc_packet_from_data(transaction));
+    request = find_pcie_request(connection->requesters_table,
+                                decoded.requester_id,
+                                decoded.tag);
+    if ((request == NULL) || !request->waiting) {
+        /* Nobody waits for this. */
+        free_data_ipc_packet(request->transaction);
+    } else {
+        pcie_request_ready(request, transaction);
+        /* NOTE: transaction is now owned by the requester. */
+    }
     return true;
 }
 
 static bool handle_memory_write(PCIE_RequestDecoded *decoded,
-                                DownstreamPCIeConnection *ipc_data)
+                                DownstreamPCIeConnection *connection)
 {
-    /* TODO: use byte enables. */
-    dma_memory_write(ipc_data->dma_as, decoded->addr, decoded->payload_data,
-                     decoded->size_in_dw * 4);
+    if (decoded->actual_size > 0) {
+        dma_memory_write(connection->dma_as,
+                         decoded->addr,
+                         decoded->actual_payload,
+                         decoded->actual_size);
+    }
     return true;
     /* No completion needed here. */
 }
 
 static bool handle_read(PCIE_RequestDecoded *decoded,
                         AddressSpace *as,
-                        DownstreamPCIeConnection *ipc_data)
+                        DownstreamPCIeConnection *connection)
 {
-    IPCChannel *channel = &ipc_data->connection.channel;
-    uint8_t completer_id = root_completer_id(ipc_data);
-    uint16_t read_size = decoded->size_in_dw * 4;
-    uint16_t result_size = (read_size > 0) ? read_size : 1;
-    uint8_t *result_data = alloca(result_size);
+    IPCChannel *channel = &connection->connection.channel;
+    uint16_t completer_id = root_completer_id(connection);
+    unsigned result_shift = decoded->addr & 3;
+    uint16_t read_size = decoded->actual_size;
+    uint8_t *result_data = (read_size > 0) ? alloca(read_size) : NULL;
     if (read_size == 0) {
-        result_data[0] = 0;
         return send_ipc_pcie_read_completion(channel, decoded->transaction,
                                              completer_id,
-                                             result_data, result_size);
+                                             NULL, 0, 0);
     } else if (!dma_memory_read(as, decoded->addr, result_data,
-                                result_size)) {
-        /* TODO: use byte enables. */
+                                read_size)) {
         /* failure is signaled by dma_memory_read by returning true */
         return send_ipc_pcie_read_completion(channel, decoded->transaction,
                                              completer_id,
-                                             result_data, result_size);
+                                             result_data, read_size,
+                                             result_shift);
     } else {
         return send_ipc_pcie_read_failure(channel, decoded->transaction,
                                           completer_id);
@@ -89,166 +291,167 @@ static bool handle_read(PCIE_RequestDecoded *decoded,
 }
 
 static bool handle_memory_read(PCIE_RequestDecoded *decoded,
-                               DownstreamPCIeConnection *ipc_data)
+                               DownstreamPCIeConnection *connection)
 {
-    return handle_read(decoded, ipc_data->dma_as, ipc_data);
+    return handle_read(decoded, connection->dma_as, connection);
 }
 
 static bool handle_memory_request(PCIE_RequestDecoded *decoded,
-                                  DownstreamPCIeConnection *ipc_data)
+                                  DownstreamPCIeConnection *connection)
 {
     if (decoded->has_payload) {
-        return handle_memory_write(decoded, ipc_data);
+        return handle_memory_write(decoded, connection);
     } else {
-        return handle_memory_read(decoded, ipc_data);
+        return handle_memory_read(decoded, connection);
     }
 }
 
 static bool handle_io_write(PCIE_RequestDecoded *decoded,
-                            DownstreamPCIeConnection *ipc_data)
+                            DownstreamPCIeConnection *connection)
 {
-    IPCChannel *channel = &ipc_data->connection.channel;
-    /* TODO: use byte enables. */
+    IPCChannel *channel = &connection->connection.channel;
     /* failure is signaled by dma_memory_write by returning true */
-    if (!dma_memory_write(ipc_data->io_as,
+    if ((decoded->actual_size > 0) &&
+        !dma_memory_write(connection->io_as,
                           decoded->addr,
-                          decoded->payload_data,
-                          decoded->size_in_dw * 4)) {
+                          decoded->actual_payload,
+                          decoded->actual_size)) {
         return send_ipc_pcie_write_completion(channel, decoded->transaction,
-                                              root_completer_id(ipc_data));
+                                              root_completer_id(connection));
     } else {
         return send_ipc_pcie_write_failure(channel, decoded->transaction,
-                                           root_completer_id(ipc_data));
+                                           root_completer_id(connection));
     }
 }
 
 static bool handle_io_read(PCIE_RequestDecoded *decoded,
-                           DownstreamPCIeConnection *ipc_data)
+                           DownstreamPCIeConnection *connection)
 {
-    return handle_read(decoded, ipc_data->io_as, ipc_data);
+    return handle_read(decoded, connection->io_as, connection);
 }
 
 static bool handle_io_request(PCIE_RequestDecoded *decoded,
-                              DownstreamPCIeConnection *ipc_data)
+                              DownstreamPCIeConnection *connection)
 {
     if (decoded->has_payload) {
-        return handle_io_write(decoded, ipc_data);
+        return handle_io_write(decoded, connection);
     } else {
-        return handle_io_read(decoded, ipc_data);
+        return handle_io_read(decoded, connection);
     }
 }
 
 static bool handle_config_request(PCIE_RequestDecoded *decoded,
-                                  DownstreamPCIeConnection *ipc_data)
+                                  DownstreamPCIeConnection *connection)
 {
-    IPCChannel *channel = &ipc_data->connection.channel;
+    IPCChannel *channel = &connection->connection.channel;
     /* config requests upstream are not allowed. */
     if (decoded->has_payload) {
         return send_ipc_pcie_write_failure(channel, decoded->transaction,
-                                           root_completer_id(ipc_data));
+                                           root_completer_id(connection));
     } else {
         return send_ipc_pcie_read_failure(channel, decoded->transaction,
-                                          root_completer_id(ipc_data));
+                                          root_completer_id(connection));
     }
 }
 
 static bool handle_msg_request(PCIE_RequestDecoded *decoded,
-                               DownstreamPCIeConnection *ipc_data)
+                               DownstreamPCIeConnection *connection)
 {
     /* TODO */
     return true;
 }
 
-static bool handle_request(void *transaction, DownstreamPCIeConnection *ipc_data)
+static bool handle_request(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_RequestDecoded decoded;
     decode_request(transaction, &decoded);
 
     if (decoded.is_memory) {
-        return handle_memory_request(&decoded, ipc_data);
+        return handle_memory_request(&decoded, connection);
     } else if (decoded.is_io) {
-        return handle_io_request(&decoded, ipc_data);
+        return handle_io_request(&decoded, connection);
     } else if (decoded.is_config) {
-        return handle_config_request(&decoded, ipc_data);
+        return handle_config_request(&decoded, connection);
     } else {
-        return handle_msg_request(&decoded, ipc_data);
+        return handle_msg_request(&decoded, connection);
     }
 }
 
-static void handle_packet(IPCPacket *packet, IPCConnection *connection)
+static void handle_packet(IPCPacket *packet, IPCConnection *base_connection)
 {
     uint8_t *transaction = ipc_packet_data(packet);
-    DownstreamPCIeConnection *ipc_data = (DownstreamPCIeConnection *)connection;
+    DownstreamPCIeConnection *connection = (DownstreamPCIeConnection *)base_connection;
     if (pcie_trans_is_completion(transaction)) {
-        handle_completion(transaction, ipc_data);
+        handle_completion(transaction, connection);
     } else {
-        handle_request(transaction, ipc_data);
+        handle_request(transaction, connection);
         free(packet);
     }
 }
 
-static DownstreamPCIeConnection *create_ipc_data(void)
+static DownstreamPCIeConnection *create_connection(void)
 {
     return (DownstreamPCIeConnection *)g_malloc0(sizeof(DownstreamPCIeConnection));
 }
 
 static const char *ipc_connection_kind = "pcie_downstream";
 
-static void init_ipc_data(DownstreamPCIeConnection *ipc_data, PCIDevice *pci_dev)
+static void init_connection(DownstreamPCIeConnection *connection, PCIDevice *pci_dev)
 {
-    init_ipc_connection(&ipc_data->connection,
+    init_ipc_connection(&connection->connection,
                         ipc_connection_kind,
                         ipc_pcie_sizer(),
                         handle_packet);
 
-    ipc_data->pci_bus_num = pci_bus_num(pci_dev->bus);
-    ipc_data->dma_as = pci_get_address_space(pci_dev);
-    ipc_data->io_as = pci_get_io_address_space(pci_dev);
+    connection->pci_bus_num = pci_bus_num(pci_dev->bus);
+    connection->dma_as = pci_get_address_space(pci_dev);
+    connection->io_as = pci_get_io_address_space(pci_dev);
+    connection->requesters_table = create_pcie_requesters_table();
 
-    activate_ipc_connection(&ipc_data->connection);
+    activate_ipc_connection(&connection->connection);
 }
 
-static DownstreamPCIeConnection *get_ipc_data(const char *socket_path,
-                                 bool use_abstract_path,
-                                 PCIDevice *pci_dev)
+static DownstreamPCIeConnection *get_connection(const char *socket_path,
+                                                bool use_abstract_path,
+                                                PCIDevice *pci_dev)
 {
     bool error;
-    IPCConnection *connection = find_ipc_connection(ipc_connection_kind,
-                                                    socket_path,
-                                                    use_abstract_path,
-                                                    &error);
-    DownstreamPCIeConnection *ipc_data = (DownstreamPCIeConnection *)connection;
+    IPCConnection *base_connection = find_ipc_connection(ipc_connection_kind,
+                                                         socket_path,
+                                                         use_abstract_path,
+                                                         &error);
+    DownstreamPCIeConnection *connection = (DownstreamPCIeConnection *)base_connection;
     if (connection == NULL) {
         if (error) {
             return NULL;
         }
-        ipc_data = create_ipc_data();
-        if (setup_ipc_channel(&ipc_data->connection.channel,
+        connection = create_connection();
+        if (setup_ipc_channel(&connection->connection.channel,
                               socket_path, use_abstract_path)) {
-            init_ipc_data(ipc_data, pci_dev);
+            init_connection(connection, pci_dev);
             register_ipc_connection(socket_path, use_abstract_path,
-                                    &ipc_data->connection);
+                                    &connection->connection);
         } else {
-            free(ipc_data);
+            free(connection);
             return NULL;
         }
-    } else if ((ipc_data->pci_bus_num != pci_bus_num(pci_dev->bus)) ||
-               (ipc_data->dma_as != pci_get_address_space(pci_dev)) ||
-               (ipc_data->io_as != pci_get_io_address_space(pci_dev))) {
+    } else if ((connection->pci_bus_num != pci_bus_num(pci_dev->bus)) ||
+               (connection->dma_as != pci_get_address_space(pci_dev)) ||
+               (connection->io_as != pci_get_io_address_space(pci_dev))) {
         fprintf(stderr, "IPC channel %s already in use.\n", socket_path);
         return NULL;
     }
-    return ipc_data;
+    return connection;
 }
 
 DownstreamPCIeConnection *init_pcie_downstream_ipc(const char *socket_path,
                                       bool use_abstract_path,
                                       PCIDevice *pci_dev)
 {
-    DownstreamPCIeConnection *ipc_data =
-        get_ipc_data(socket_path, use_abstract_path, pci_dev);
-    if (ipc_data == NULL) {
+    DownstreamPCIeConnection *connection =
+        get_connection(socket_path, use_abstract_path, pci_dev);
+    if (connection == NULL) {
         fprintf(stderr, "Failed to open IPC channel %s.\n", socket_path);
     }
-    return ipc_data;
+    return connection;
 }

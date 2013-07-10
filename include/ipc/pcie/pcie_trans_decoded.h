@@ -29,6 +29,8 @@ typedef struct PCIE_RequestDecoded {
     unsigned header_size;
     const uint8_t *payload_data;
     uint16_t size_in_dw;
+    const uint8_t *actual_payload;
+    uint16_t actual_size;
 
     bool is_memory;
     bool is_io;
@@ -60,6 +62,8 @@ typedef struct PCIE_CompletionDecoded {
 
 static inline void decode_request(const uint8_t *transaction,
                                   PCIE_RequestDecoded *decoded) {
+    int i, j;
+
     decoded->transaction = transaction;
     decoded->header_size = pcie_trans_has_fourth_dw(transaction)? 16: 12;
     decoded->payload_data = transaction + decoded->header_size;
@@ -83,14 +87,46 @@ static inline void decode_request(const uint8_t *transaction,
         }
     }
 
-    if (!decoded->is_msg) {
-        pcie_trans_get_byte_enable_bits(transaction,
-                                        decoded->bebits_first_dw,
-                                        decoded->bebits_last_dw);
-    }
-
     if (decoded->is_memory || decoded->is_io) {
         decoded->addr = pcie_trans_get_addr(transaction);
+    } else if (decoded->is_config) {
+        decoded->addr = pcie_trans_get_target_register(transaction);
+    }
+
+    if (!decoded->is_msg) {
+        if (decoded->size_in_dw == 0) {
+            decoded->actual_size = 0;
+        } else {
+            pcie_trans_get_byte_enable_bits(transaction,
+                                            decoded->bebits_first_dw,
+                                            decoded->bebits_last_dw);
+            for (i = 0; i < 4; ++i) {
+                if (decoded->bebits_first_dw[i]) {
+                    break;
+                }
+            }
+            if (i < 4) {
+                if (decoded->size_in_dw == 1) {
+                    for (j = 3; j >= 0; ++j) {
+                        if (decoded->bebits_first_dw[j]) {
+                            break;
+                        }
+                    }
+                } else {
+                    for (j = 3; j >= 0; ++j) {
+                        if (decoded->bebits_last_dw[j]) {
+                            break;
+                        }
+                    }
+                }
+                decoded->addr += i;
+                decoded->actual_size =
+                    (decoded->size_in_dw - 1) * 4 + j - i + 1;
+                decoded->actual_payload = decoded->payload_data + i;
+            } else {
+                decoded->actual_size = 0;
+            }
+        }
     }
 }
 
