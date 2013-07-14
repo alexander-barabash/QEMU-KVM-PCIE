@@ -305,4 +305,25 @@ send_ipc_pcie_config_write_request(IPCChannel *channel,
     }
 }
 
+static inline bool
+send_ipc_pcie_special_request(IPCChannel *channel,
+                              uint16_t requester_id,
+                              uint8_t tag,
+                              uint8_t bus_num,
+                              uint8_t dev_num,
+                              uint8_t func_num,
+                              uint16_t external_device_id)
+{
+    uint8_t trans_data[16];
+    pcie_trans_encode_special_request(trans_data,
+                                      requester_id,
+                                      tag,
+                                      bus_num,
+                                      dev_num,
+                                      func_num,
+                                      external_device_id);
+    return send_ipc_pcie_transaction_header(channel, trans_data);
+}
+
+
 #endif /* QEMU_PCIE_TRANS_ENCODE_H */

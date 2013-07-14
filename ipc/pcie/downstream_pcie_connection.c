@@ -226,6 +226,32 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
     return data.val;
 }
 
+void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
+                                          PCIDevice *pci_dev,
+                                          uint16_t external_device_id)
+{
+    PCIeRequest *request;
+    uint16_t requester_id = pcie_requester_id(pci_dev);
+    uint8_t tag;
+    if (!register_pcie_request(connection->requesters_table,
+                               requester_id,
+                               &request,
+                               &tag)) {
+        error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
+        return;
+    }
+    if (!send_ipc_pcie_special_request(&connection->connection.channel,
+                                       requester_id,
+                                       tag,
+                                       pci_bus_num(pci_dev->bus),
+                                       PCI_SLOT(pci_dev->devfn),
+                                       PCI_FUNC(pci_dev->devfn),
+                                       external_device_id)) {
+        error_report("Cannot send connection packet for device %s\n", pci_dev->name);
+    }
+    pcie_request_done(request);
+}
+
 static uint16_t root_completer_id(DownstreamPCIeConnection *connection)
 {
     /* TODO: maybe find out the completer's devfn somehow. */

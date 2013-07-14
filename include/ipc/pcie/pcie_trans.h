@@ -776,8 +776,7 @@ void pcie_trans_encode_request(uint8_t trans_data[16],
                                bool *bebits_first_dw,
                                bool *bebits_last_dw)
 {
-    memset(trans_data, 0, 16);
-
+    pcie_trans_clear(trans_data);
     pcie_trans_set_transaction_type(trans_data, transaction_type);
     pcie_trans_set_payload_mark(trans_data, with_data);
     pcie_trans_set_addr(trans_data, addr);
@@ -886,6 +885,7 @@ void pcie_trans_encode_config_request(uint8_t trans_data[16],
                                                trailing_disabled_bytes,
                                                bebits_first_dw,
                                                bebits_last_dw);
+    pcie_trans_clear(trans_data);
     pcie_trans_set_transaction_type(trans_data,
                                     is_type1 ?
                                     PCIE_CONFIG_TYPE1_REQUEST :
@@ -898,6 +898,23 @@ void pcie_trans_encode_config_request(uint8_t trans_data[16],
     pcie_trans_set_target_register(trans_data, reg_num);
     pcie_trans_set_data_size_in_dw(trans_data, 1);
     pcie_trans_set_byte_enable_bits(trans_data, bebits_first_dw, bebits_last_dw);
+}
+
+static inline
+void pcie_trans_encode_special_request(uint8_t trans_data[16],
+                                       uint16_t requester_id,
+                                       uint8_t tag,
+                                       uint8_t bus_num,
+                                       uint8_t dev_num,
+                                       uint8_t func_num,
+                                       uint16_t external_device_id) {
+    pcie_trans_clear(trans_data);
+    pcie_trans_set_transaction_type(trans_data, PCIE_REQUEST_TO_IGNORE);
+    pcie_trans_set_payload_mark(trans_data, false);
+    pcie_trans_set_request_requester_id(trans_data, requester_id);
+    pcie_trans_set_request_tag(trans_data, tag);
+    pcie_trans_set_routing_target_device(trans_data, bus_num, dev_num, func_num);
+    pcie_trans_set_target_register(trans_data, external_device_id);
 }
 
 static inline

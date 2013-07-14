@@ -181,6 +181,7 @@ typedef struct ExternalPCIState {
 
     uint32_t flags;
     char *ipc_socket_path;
+    uint16_t external_device_id;
 } ExternalPCIState;
 
 static inline bool
@@ -593,6 +594,10 @@ static int pci_external_init(PCIDevice *pci_dev)
         return -1;
     }
 
+    send_special_downstream_pcie_request(d->ipc_connection,
+                                         pci_dev,
+                                         d->external_device_id);
+
     for (i = 0; i < PCI_NUM_BARS; ++i, ++bar_info, ++io_region) {
         bar_info->dev = d;
         bar_update_size(bar_info);
@@ -789,6 +794,8 @@ static Property external_pci_properties[] = {
     DEFINE_PCI_BAR_PROPS("pci_bar", 5),
 
     DEFINE_PROP_STRING("ipc_socket_path", ExternalPCIState, ipc_socket_path),
+    DEFINE_PROP_UINT16("external_device_id", ExternalPCIState,
+                       external_device_id, 0),
     DEFINE_PROP_BIT("ipc_use_unix_socket", ExternalPCIState,
                     flags, USE_ABSTRACT_SOCKET_FLAG_NR,
                     false),
