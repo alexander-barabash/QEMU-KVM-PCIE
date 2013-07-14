@@ -286,15 +286,13 @@ uint8_t pcie_trans_get_tc(const uint8_t *trans_data)
 static inline
 void pcie_trans_set_at(uint8_t *trans_data, uint8_t at)
 {
-    /* TODO: FIX THIS */
-    trans_data[2] = (uint8_t)((trans_data[2] & ~0x06) | ((at << 2) & 0x06));
+    trans_data[2] = (uint8_t)((trans_data[2] & ~0x0C) | ((at << 2) & 0x0C));
 }
 
 static inline
 uint8_t pcie_trans_get_at(const uint8_t *trans_data)
 {
-    /* TODO: FIX THIS */
-    return (uint8_t)((trans_data[2] & 0x06) >> 2);
+    return (uint8_t)((trans_data[2] >> 2) & 0x3);
 }
 
 static inline
@@ -371,8 +369,8 @@ static inline void pcie_trans_set_target_register(uint8_t *trans_data,
 static inline
 uint16_t pcie_trans_get_target_register(const uint8_t *trans_data)
 {
-    /* TODO: FIRST SHIFT THEN MASK */
-    return (uint16_t)(((trans_data[10] & 0x0F) << 6) | (trans_data[11] >> 2));
+    return (uint16_t)(((trans_data[10] & 0x0F) << 6) |
+                      ((trans_data[11] >> 2) & 0x3F));
 }
 
 static inline
@@ -496,8 +494,7 @@ void pcie_trans_set_completion_status(uint8_t *trans_data,
 static inline
 uint8_t pcie_trans_get_completion_status(const uint8_t *trans_data)
 {
-    /* TODO: FIRST SHIFT THEN MASK */
-    return (uint8_t)(trans_data[6] >> 5);
+    return (uint8_t)((trans_data[6] >> 5) & 0x7);
 }
 
 static inline

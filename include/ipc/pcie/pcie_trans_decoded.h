@@ -38,6 +38,7 @@ typedef struct PCIE_RequestDecoded {
     bool is_type0;
     bool is_msg;
     bool has_payload;
+    bool is_request_to_ignore;
 
     uint64_t addr;
     bool bebits_first_dw[4];
@@ -75,6 +76,7 @@ static inline void decode_request(const uint8_t *transaction,
     decoded->is_type0 = pcie_trans_is_type0_config_request(transaction);
     decoded->is_msg = pcie_trans_is_message_transaction(transaction);
     decoded->is_memory = pcie_trans_is_memory_request(transaction);
+    decoded->is_request_to_ignore = pcie_trans_is_request_to_ignore(transaction);
 
     if (decoded->is_memory || decoded->is_io) {
         decoded->addr = pcie_trans_get_addr(transaction);
