@@ -70,22 +70,11 @@ static inline void decode_request(const uint8_t *transaction,
     decoded->size_in_dw = pcie_trans_get_data_size_in_dw(transaction);
     decoded->has_payload = pcie_trans_has_payload(transaction);
 
-    decoded->is_io = false;
-    decoded->is_config = false;
-    decoded->is_type0 = false;
-    decoded->is_msg = false;
+    decoded->is_io = pcie_trans_is_io_request(transaction);
+    decoded->is_config = pcie_trans_is_config_request(transaction);
+    decoded->is_type0 = pcie_trans_is_type0_config_request(transaction);
+    decoded->is_msg = pcie_trans_is_message_transaction(transaction);
     decoded->is_memory = pcie_trans_is_memory_request(transaction);
-
-    if (!decoded->is_memory) {
-        decoded->is_io = pcie_trans_is_io_request(transaction);
-        if (!decoded->is_io) {
-            decoded->is_config = pcie_trans_is_config_request(transaction,
-                                                             &decoded->is_type0);
-            if (!decoded->is_config) {
-                decoded->is_msg = true;
-            }
-        }
-    }
 
     if (decoded->is_memory || decoded->is_io) {
         decoded->addr = pcie_trans_get_addr(transaction);

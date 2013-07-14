@@ -49,6 +49,12 @@ typedef enum PCIE_Completion_Status {
 } PCIE_Completion_Status;
 
 static inline
+void pcie_trans_clear(uint8_t *trans_data)
+{
+    memset(trans_data, 0, 16);
+}
+
+static inline
 void pcie_trans_set_transaction_type(uint8_t *trans_data,
                                      uint8_t transaction_type)
 {
@@ -74,6 +80,13 @@ bool pcie_trans_is_completion(const uint8_t *trans_data)
 }
 
 static inline
+bool pcie_trans_is_request_to_ignore(const uint8_t *trans_data)
+{
+    return
+        (pcie_trans_get_transaction_type(trans_data) == PCIE_REQUEST_TO_IGNORE);
+}
+
+static inline
 bool pcie_trans_is_memory_request(const uint8_t *trans_data)
 {
     return ((pcie_trans_get_transaction_type(trans_data) &
@@ -88,18 +101,10 @@ bool pcie_trans_is_io_request(const uint8_t *trans_data)
 }
 
 static inline
-bool pcie_trans_is_config_request(const uint8_t *trans_data, bool *is_type0)
+bool pcie_trans_is_config_request(const uint8_t *trans_data)
 {
-    uint8_t type = pcie_trans_get_transaction_type(trans_data);
-    if (type == PCIE_CONFIG_TYPE0_REQUEST) {
-        *is_type0 = true;
-        return true;
-    } else if (type == PCIE_CONFIG_TYPE1_REQUEST) {
-        *is_type0 = false;
-        return true;
-    } else {
-        return false;
-    }
+    return ((pcie_trans_get_transaction_type(trans_data) &
+             ~PCIE_LOCKED_TRANSACTION_MARK) == PCIE_CONFIG_TYPE0_REQUEST);
 }
 
 static inline
@@ -121,7 +126,42 @@ bool pcie_trans_is_posted_request(const uint8_t *trans_data)
 {
     return (pcie_trans_is_message_transaction(trans_data) ||
             (pcie_trans_is_memory_request(trans_data) &&
-             pcie_trans_has_payload(trans_data)));
+             pcie_trans_has_payload(trans_data)) ||
+            pcie_trans_is_request_to_ignore(trans_data));
+}
+
+static inline
+bool pcie_trans_is_locked(const uint8_t *trans_data) {
+    return ((pcie_trans_get_transaction_type(trans_data) &
+             PCIE_LOCKED_TRANSACTION_MARK) == PCIE_LOCKED_TRANSACTION_MARK);
+}
+
+static inline
+bool pcie_trans_is_type0_config_request(const uint8_t *trans_data) {
+    return (pcie_trans_is_config_request(trans_data) &&
+            !pcie_trans_is_locked(trans_data));
+}
+
+static inline
+bool pcie_trans_is_read_request(const uint8_t *trans_data) {
+    return (!pcie_trans_has_payload(trans_data) &&
+            (pcie_trans_is_memory_request(trans_data) ||
+             pcie_trans_is_config_request(trans_data) ||
+             pcie_trans_is_io_request(trans_data)));
+}
+
+static inline
+bool pcie_trans_is_write_request(const uint8_t *trans_data) {
+    return (pcie_trans_has_payload(trans_data) &&
+            (pcie_trans_is_memory_request(trans_data) ||
+             pcie_trans_is_config_request(trans_data) ||
+             pcie_trans_is_io_request(trans_data)));
+}
+
+static inline
+bool pcie_trans_get_long_header_mark(const uint8_t *trans_data)
+{
+    return (trans_data[0] & PCIE_LONG_HEADER_MARK) != 0;
 }
 
 static inline void
@@ -172,12 +212,6 @@ void pcie_trans_set_payload_mark(uint8_t *trans_data, bool with_payload)
 }
 
 static inline
-bool pcie_trans_get_long_header_mark(const uint8_t *trans_data)
-{
-    return (trans_data[0] & PCIE_LONG_HEADER_MARK) != 0;
-}
-
-static inline
 bool pcie_trans_has_fourth_dw(const uint8_t *trans_data)
 {
     return pcie_trans_get_long_header_mark(trans_data);
@@ -204,19 +238,24 @@ uint16_t pcie_trans_get_data_size_in_dw(const uint8_t *trans_data)
     return (uint16_t)(trans_data[3] | ((trans_data[2] & 0x03) << 8));
 }
 
-static inline
-uint16_t pcie_trans_get_payload_size_in_dw(const uint8_t *trans_data)
+static inline uint16_t
+pcie_trans_get_payload_or_response_size_in_dw(const uint8_t *trans_data)
 {
-    uint16_t result;
-    if(!pcie_trans_has_payload(trans_data)) {
-        return 0;
-    }
-    result = pcie_trans_get_data_size_in_dw(trans_data);
+    uint16_t result = pcie_trans_get_data_size_in_dw(trans_data);
     if(result == 0) {
       return 1024;
     } else {
       return result;
     }
+}
+
+static inline
+uint16_t pcie_trans_get_payload_size_in_dw(const uint8_t *trans_data)
+{
+    if(!pcie_trans_has_payload(trans_data)) {
+        return 0;
+    }
+    return pcie_trans_get_payload_or_response_size_in_dw(trans_data);
 }
 
 static inline
@@ -241,18 +280,20 @@ void pcie_trans_set_tc(uint8_t *trans_data, uint8_t tc)
 static inline
 uint8_t pcie_trans_get_tc(const uint8_t *trans_data)
 {
-    return (uint8_t)((trans_data[1] & 0x70) >> 4);
+    return (uint8_t)((trans_data[1] >> 4) & 0x7);
 }
 
 static inline
 void pcie_trans_set_at(uint8_t *trans_data, uint8_t at)
 {
+    /* TODO: FIX THIS */
     trans_data[2] = (uint8_t)((trans_data[2] & ~0x06) | ((at << 2) & 0x06));
 }
 
 static inline
 uint8_t pcie_trans_get_at(const uint8_t *trans_data)
 {
+    /* TODO: FIX THIS */
     return (uint8_t)((trans_data[2] & 0x06) >> 2);
 }
 
@@ -299,9 +340,9 @@ bool pcie_trans_get_id_based_ordering(const uint8_t *trans_data)
 
 static inline
 void pcie_trans_set_routing_target_device(uint8_t *trans_data,
-                                          uint32_t bus_num,
-                                          uint32_t dev_num,
-                                          uint32_t func_num)
+                                          uint8_t bus_num,
+                                          uint8_t dev_num,
+                                          uint8_t func_num)
 {
     trans_data[8] = (uint8_t)(bus_num);
     trans_data[9] = (uint8_t)((dev_num << 3) | func_num);
@@ -309,13 +350,13 @@ void pcie_trans_set_routing_target_device(uint8_t *trans_data,
 
 static inline
 void pcie_trans_get_routing_target_device(const uint8_t *trans_data,
-                                          uint32_t *bus_num,
-                                          uint32_t *dev_num,
-                                          uint32_t *func_num)
+                                          uint8_t *bus_num,
+                                          uint8_t *dev_num,
+                                          uint8_t *func_num)
 {
     *bus_num = trans_data[8];
-    *dev_num = trans_data[9] >> 3;
-    *func_num = trans_data[9] & 0x7;
+    *dev_num = (uint8_t)((trans_data[9] >> 3) & 0x1f);
+    *func_num = (uint8_t)(trans_data[9] & 0x7);
 }
 
 static inline void pcie_trans_set_target_register(uint8_t *trans_data,
@@ -330,6 +371,7 @@ static inline void pcie_trans_set_target_register(uint8_t *trans_data,
 static inline
 uint16_t pcie_trans_get_target_register(const uint8_t *trans_data)
 {
+    /* TODO: FIRST SHIFT THEN MASK */
     return (uint16_t)(((trans_data[10] & 0x0F) << 6) | (trans_data[11] >> 2));
 }
 
@@ -454,6 +496,7 @@ void pcie_trans_set_completion_status(uint8_t *trans_data,
 static inline
 uint8_t pcie_trans_get_completion_status(const uint8_t *trans_data)
 {
+    /* TODO: FIRST SHIFT THEN MASK */
     return (uint8_t)(trans_data[6] >> 5);
 }
 
@@ -504,24 +547,24 @@ void pcie_trans_get_byte_enable_bits(const uint8_t *trans_data,
 }
 
 static inline
-void pcie_trans_encode_completion_transaction_id(const uint8_t *trans_data,
-                                                 uint8_t completion_data[16]) {
-    uint16_t requester_id = pcie_trans_get_request_requester_id(trans_data);
-    uint8_t tag = pcie_trans_get_request_tag(trans_data);
+void pcie_trans_copy_completion_transaction_id_from_request(uint8_t *completion_data,
+                                                            const uint8_t *request_data) {
+    uint16_t requester_id = pcie_trans_get_request_requester_id(request_data);
+    uint8_t tag = pcie_trans_get_request_tag(request_data);
 
     pcie_trans_set_completion_requester_id(completion_data, requester_id);
     pcie_trans_set_completion_tag(completion_data, tag);
 }
 
 static inline
-void pcie_trans_encode_completion(const uint8_t *trans_data,
+void pcie_trans_encode_completion(uint8_t *completion_data,
+                                  const uint8_t *request_data,
                                   bool locked,
                                   bool with_data,
                                   uint16_t completer_id,
-                                  uint8_t completion_status,
-                                  uint8_t completion_data[16])
+                                  uint8_t completion_status)
 {
-    memset(completion_data, 0, 16);
+    pcie_trans_clear(completion_data);
     pcie_trans_set_transaction_type(completion_data,
                                     locked?
                                     PCIE_LOCKED_COMPLETION:
@@ -530,117 +573,118 @@ void pcie_trans_encode_completion(const uint8_t *trans_data,
     pcie_trans_set_completer_id(completion_data, completer_id);
     pcie_trans_set_completion_status(completion_data, completion_status);
     if (with_data) {
-        uint16_t packet_size_in_dw = pcie_trans_get_data_size_in_dw(trans_data);
+        uint16_t packet_size_in_dw = pcie_trans_get_data_size_in_dw(request_data);
         pcie_trans_set_data_size_in_dw(completion_data, packet_size_in_dw);
         /* TODO: fix the byte count */
         pcie_trans_set_completion_byte_count(completion_data,
                                              packet_size_in_dw * 4);
     }
-    pcie_trans_encode_completion_transaction_id(trans_data, completion_data);
+    pcie_trans_copy_completion_transaction_id_from_request(completion_data,
+                                                           request_data);
 }
 
 static inline
-void pcie_trans_encode_config_read_completion(const uint8_t *trans_data,
-                                              uint16_t completer_id,
-                                              uint8_t completion_data[16])
+void pcie_trans_encode_config_read_completion(uint8_t *completion_data,
+                                              const uint8_t *request_data,
+                                              uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* locked = */ false,
                                  /* with_data = */ true,
                                  completer_id,
-                                 SUCCESSFUL_COMPLETION,
-                                 completion_data);
+                                 SUCCESSFUL_COMPLETION);
 }
 
 static inline
-void pcie_trans_encode_config_read_failure_completion(const uint8_t *trans_data,
-                                                      uint16_t completer_id,
-                                                      uint8_t completion_data[16])
+void pcie_trans_encode_config_read_failure_completion(uint8_t *completion_data,
+                                                      const uint8_t *request_data,
+                                                      uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 UNSUPPORTED_REQUEST,
-                                 completion_data);
+                                 UNSUPPORTED_REQUEST);
 }
 
 static inline
-void pcie_trans_encode_config_write_completion(const uint8_t *trans_data,
-                                               uint16_t completer_id,
-                                               uint8_t completion_data[16])
+void pcie_trans_encode_config_write_completion(uint8_t *completion_data,
+                                               const uint8_t *request_data,
+                                               uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 SUCCESSFUL_COMPLETION,
-                                 completion_data);
+                                 SUCCESSFUL_COMPLETION);
 }
 
 static inline
-void pcie_trans_encode_config_write_failure_completion(const uint8_t *trans_data,
-                                                       uint16_t completer_id,
-                                                       uint8_t completion_data[16])
+void pcie_trans_encode_config_write_failure_completion(uint8_t *completion_data,
+                                                       const uint8_t *request_data,
+                                                       uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 UNSUPPORTED_REQUEST,
-                                 completion_data);
+                                 UNSUPPORTED_REQUEST);
 }
 
 static inline
-void pcie_trans_encode_read_completion(const uint8_t *trans_data,
-                                       uint16_t completer_id,
-                                       uint8_t completion_data[16])
+void pcie_trans_encode_read_completion(uint8_t *completion_data,
+                                       const uint8_t *request_data,
+                                       uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* TODO locked = */ false,
                                  /* with_data = */ true,
                                  completer_id,
-                                 SUCCESSFUL_COMPLETION,
-                                 completion_data);
+                                 SUCCESSFUL_COMPLETION);
 }
 
 static inline
-void pcie_trans_encode_read_failure_completion(const uint8_t *trans_data,
-                                               uint16_t completer_id,
-                                               uint8_t completion_data[16])
+void pcie_trans_encode_read_failure_completion(uint8_t *completion_data,
+                                               const uint8_t *request_data,
+                                               uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* TODO locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 UNSUPPORTED_REQUEST,
-                                 completion_data);
+                                 UNSUPPORTED_REQUEST);
 }
 
 static inline
-void pcie_trans_encode_write_completion(const uint8_t *trans_data,
-                                        uint16_t completer_id,
-                                        uint8_t completion_data[16])
+void pcie_trans_encode_write_completion(uint8_t *completion_data,
+                                        const uint8_t *request_data,
+                                        uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* TODO locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 SUCCESSFUL_COMPLETION,
-                                 completion_data);
+                                 SUCCESSFUL_COMPLETION);
 }
 
 static inline
-void pcie_trans_encode_write_failure_completion(const uint8_t *trans_data,
-                                                uint16_t completer_id,
-                                                uint8_t completion_data[16])
+void pcie_trans_encode_write_failure_completion(uint8_t *completion_data,
+                                                const uint8_t *request_data,
+                                                uint16_t completer_id)
 {
-    pcie_trans_encode_completion(trans_data,
+    pcie_trans_encode_completion(completion_data,
+                                 request_data,
                                  /* TODO locked = */ false,
                                  /* with_data = */ false,
                                  completer_id,
-                                 UNSUPPORTED_REQUEST,
-                                 completion_data);
+                                 UNSUPPORTED_REQUEST);
 }
 
 static inline
@@ -651,9 +695,9 @@ void pcie_trans_compute_bebits_for_1_word_trans(uint64_t addr,
                                                 bool *bebits_first_dw,
                                                 bool *bebits_last_dw)
 {
-    int i, j;
+    unsigned i, j;
 
-    *leading_disabled_bytes = addr & 3;
+    *leading_disabled_bytes = (unsigned)(addr & 3);
     if (size > 4 - *leading_disabled_bytes) {
         size = 4 - *leading_disabled_bytes;
         *trailing_disabled_bytes = 0;
@@ -684,9 +728,9 @@ void pcie_trans_compute_bebits_for_multiword_trans(uint64_t addr,
                                                    bool *bebits_last_dw)
 {
     unsigned last_dword_overflow;
-    int i;
+    unsigned i;
 
-    *leading_disabled_bytes = addr & 3;
+    *leading_disabled_bytes = (unsigned)(addr & 3);
     last_dword_overflow = (size + *leading_disabled_bytes) & 3;
     *trailing_disabled_bytes = last_dword_overflow ? 4 - last_dword_overflow: 0;
 
@@ -701,6 +745,23 @@ void pcie_trans_compute_bebits_for_multiword_trans(uint64_t addr,
     }
     for (; i < 4; ++i) {
         bebits_last_dw[i] = false;
+    }
+}
+
+static inline
+bool pcie_trans_is_1_word_memory_trans(uint64_t addr,
+                                       uint32_t size)
+{
+    if (size > 4) {
+        return false;
+    }
+    if ((addr & 3) == 0) {
+        return true;
+    }
+    if (size + (addr & 3) > 4) {
+        return false;
+    } else {
+        return true;
     }
 }
 
@@ -725,23 +786,6 @@ void pcie_trans_encode_request(uint8_t trans_data[16],
     pcie_trans_set_data_size_in_dw(trans_data, size_in_dw);
     pcie_trans_set_request_requester_id(trans_data, requester_id);
     pcie_trans_set_request_tag(trans_data, tag);
-}
-
-static inline
-bool pcie_trans_is_1_word_memory_trans(uint64_t addr,
-                                       uint32_t size)
-{
-    if (size > 4) {
-        return false;
-    }
-    if ((addr & 3) == 0) {
-        return true;
-    }
-    if (size + (addr & 3) > 4) {
-        return false;
-    } else {
-        return true;
-    }
 }
 
 static inline
@@ -774,7 +818,7 @@ void pcie_trans_encode_memory_request(uint8_t trans_data[16],
                                                       bebits_first_dw,
                                                       bebits_last_dw);
         size_in_dw =
-            (size + *leading_disabled_bytes + *trailing_disabled_bytes) >> 2;
+            (size + *leading_disabled_bytes + *trailing_disabled_bytes) / 4;
     }
 
     pcie_trans_encode_request(trans_data,
@@ -817,6 +861,43 @@ void pcie_trans_encode_io_request(uint8_t trans_data[16],
                               1,
                               bebits_first_dw,
                               bebits_last_dw);
+}
+
+static inline
+void pcie_trans_encode_config_request(uint8_t trans_data[16],
+                                      bool with_data,
+                                      bool is_type1,
+                                      uint16_t requester_id,
+                                      uint8_t tag,
+                                      uint8_t bus_num,
+                                      uint8_t dev_num,
+                                      uint8_t func_num,
+                                      uint16_t reg_num,
+                                      uint32_t size,
+                                      unsigned *leading_disabled_bytes,
+                                      unsigned *trailing_disabled_bytes)
+{
+    bool bebits_first_dw[4];
+    bool bebits_last_dw[4];
+
+    pcie_trans_compute_bebits_for_1_word_trans(reg_num,
+                                               size,
+                                               leading_disabled_bytes,
+                                               trailing_disabled_bytes,
+                                               bebits_first_dw,
+                                               bebits_last_dw);
+    pcie_trans_set_transaction_type(trans_data,
+                                    is_type1 ?
+                                    PCIE_CONFIG_TYPE1_REQUEST :
+                                    PCIE_CONFIG_TYPE0_REQUEST);
+    pcie_trans_set_payload_mark(trans_data, with_data);
+    pcie_trans_set_request_requester_id(trans_data, requester_id);
+    pcie_trans_set_request_tag(trans_data, tag);
+    pcie_trans_set_routing_target_device(trans_data,
+                                         bus_num, dev_num, func_num);
+    pcie_trans_set_target_register(trans_data, reg_num);
+    pcie_trans_set_data_size_in_dw(trans_data, 1);
+    pcie_trans_set_byte_enable_bits(trans_data, bebits_first_dw, bebits_last_dw);
 }
 
 static inline
@@ -896,50 +977,13 @@ void pcie_trans_encode_io_write_request(uint8_t trans_data[16],
 }
                                             
 static inline
-void pcie_trans_encode_config_request(uint8_t trans_data[16],
-                                      bool with_data,
-                                      bool is_type1,
-                                      uint16_t requester_id,
-                                      uint8_t tag,
-                                      uint32_t bus_num,
-                                      uint32_t dev_num,
-                                      uint32_t func_num,
-                                      uint16_t reg_num,
-                                      uint32_t size,
-                                      unsigned *leading_disabled_bytes,
-                                      unsigned *trailing_disabled_bytes)
-{
-    bool bebits_first_dw[4];
-    bool bebits_last_dw[4];
-
-    pcie_trans_compute_bebits_for_1_word_trans(reg_num,
-                                               size,
-                                               leading_disabled_bytes,
-                                               trailing_disabled_bytes,
-                                               bebits_first_dw,
-                                               bebits_last_dw);
-    pcie_trans_set_transaction_type(trans_data,
-                                    is_type1 ?
-                                    PCIE_CONFIG_TYPE1_REQUEST :
-                                    PCIE_CONFIG_TYPE0_REQUEST);
-    pcie_trans_set_payload_mark(trans_data, with_data);
-    pcie_trans_set_request_requester_id(trans_data, requester_id);
-    pcie_trans_set_request_tag(trans_data, tag);
-    pcie_trans_set_routing_target_device(trans_data,
-                                         bus_num, dev_num, func_num);
-    pcie_trans_set_target_register(trans_data, reg_num);
-    pcie_trans_set_data_size_in_dw(trans_data, 1);
-    pcie_trans_set_byte_enable_bits(trans_data, bebits_first_dw, bebits_last_dw);
-}
-
-static inline
 void pcie_trans_encode_config_read_request(uint8_t trans_data[16],
                                            bool is_type1,
                                            uint16_t requester_id,
                                            uint8_t tag,
-                                           uint32_t bus_num,
-                                           uint32_t dev_num,
-                                           uint32_t func_num,
+                                           uint8_t bus_num,
+                                           uint8_t dev_num,
+                                           uint8_t func_num,
                                            uint16_t reg_num,
                                            uint32_t size)
 {
@@ -964,9 +1008,9 @@ void pcie_trans_encode_config_write_request(uint8_t trans_data[16],
                                             bool is_type1,
                                             uint16_t requester_id,
                                             uint8_t tag,
-                                            uint32_t bus_num,
-                                            uint32_t dev_num,
-                                            uint32_t func_num,
+                                            uint8_t bus_num,
+                                            uint8_t dev_num,
+                                            uint8_t func_num,
                                             uint16_t reg_num,
                                             uint32_t size,
                                             unsigned *leading_disabled_bytes,

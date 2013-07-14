@@ -39,9 +39,9 @@ send_ipc_pcie_read_failure(IPCChannel *channel,
                            uint16_t completer_id)
 {
     uint8_t completion_data[16];
-    pcie_trans_encode_read_failure_completion(request,
-                                              completer_id,
-                                              completion_data);                              
+    pcie_trans_encode_read_failure_completion(completion_data,
+                                              request,
+                                              completer_id);                              
     return send_ipc_pcie_transaction_header(channel, completion_data);
 }
                            
@@ -51,9 +51,9 @@ send_ipc_pcie_write_failure(IPCChannel *channel,
                             uint16_t completer_id)
 {
     uint8_t completion_data[16];
-    pcie_trans_encode_write_failure_completion(request,
-                                               completer_id,
-                                               completion_data);                              
+    pcie_trans_encode_write_failure_completion(completion_data,
+                                               request,
+                                               completer_id);                              
     return send_ipc_pcie_transaction_header(channel, completion_data);
 }
                            
@@ -63,9 +63,9 @@ send_ipc_pcie_write_completion(IPCChannel *channel,
                                uint16_t completer_id)
 {
     uint8_t completion_data[16];
-    pcie_trans_encode_write_completion(request,
-                                       completer_id,
-                                       completion_data);                              
+    pcie_trans_encode_write_completion(completion_data,
+                                       request,
+                                       completer_id);                              
     return send_ipc_pcie_transaction_header(channel, completion_data);
 }
                            
@@ -80,9 +80,9 @@ send_ipc_pcie_read_completion(IPCChannel *channel,
     uint8_t completion_data[16];
     uint8_t padding[4];
     unsigned copy_to_padding;
-    pcie_trans_encode_read_completion(request,
-                                      completer_id,
-                                      completion_data);
+    pcie_trans_encode_read_completion(completion_data,
+                                      request,
+                                      completer_id);
     if (!send_ipc_pcie_transaction_header(channel, completion_data)) {
         return false;
     }
@@ -246,9 +246,9 @@ send_ipc_pcie_config_read_request(IPCChannel *channel,
                                   bool is_type1,
                                   uint16_t requester_id,
                                   uint8_t tag,
-                                  uint32_t bus_num,
-                                  uint32_t dev_num,
-                                  uint32_t func_num,
+                                  uint8_t bus_num,
+                                  uint8_t dev_num,
+                                  uint8_t func_num,
                                   uint16_t reg_num,
                                   uint32_t size)
 {
@@ -270,9 +270,9 @@ send_ipc_pcie_config_write_request(IPCChannel *channel,
                                    bool is_type1,
                                    uint16_t requester_id,
                                    uint8_t tag,
-                                   uint32_t bus_num,
-                                   uint32_t dev_num,
-                                   uint32_t func_num,
+                                   uint8_t bus_num,
+                                   uint8_t dev_num,
+                                   uint8_t func_num,
                                    uint16_t reg_num,
                                    uint32_t size,
                                    const uint8_t *data)
