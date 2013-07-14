@@ -509,7 +509,7 @@ void pcie_trans_set_completion_byte_count(uint8_t *trans_data,
 static inline
 uint16_t pcie_trans_get_completion_byte_count(const uint8_t *trans_data)
 {
-    return (uint16_t)(trans_data[7] | ((trans_data[6] & 0x0F) << 4));
+    return (uint16_t)(trans_data[7] | ((trans_data[6] & 0x0F) << 8));
 }
 
 static inline
@@ -572,7 +572,6 @@ void pcie_trans_encode_completion(uint8_t *completion_data,
     if (with_data) {
         uint16_t packet_size_in_dw = pcie_trans_get_data_size_in_dw(request_data);
         pcie_trans_set_data_size_in_dw(completion_data, packet_size_in_dw);
-        /* TODO: fix the byte count */
         pcie_trans_set_completion_byte_count(completion_data,
                                              packet_size_in_dw * 4);
     }
