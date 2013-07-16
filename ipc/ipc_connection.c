@@ -122,7 +122,7 @@ IPCConnection *find_ipc_connection(const char *connection_kind,
     }
     connection = g_hash_table_lookup(table, socket_path);
     if (connection != NULL) {
-        if (g_strcmp0(connection->kind, connection_kind) != 0) {
+        if (strcmp(connection->kind, connection_kind) != 0) {
             *error = true;
             return NULL;
         }
