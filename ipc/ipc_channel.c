@@ -58,8 +58,15 @@ bool setup_ipc_channel(IPCChannel *channel,
     }
     strcpy(addr_path, socket_path);
 
+#ifdef SOCK_CLOEXEC
     channel->fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    channel->fd = socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
     if (channel->fd != -1) {
+#ifndef SOCK_CLOEXEC
+        qemu_set_cloexec(channel->fd);
+#endif
         while (connect(channel->fd,
                        (struct sockaddr *)(&addr),
                        addr_size) != 0) {
