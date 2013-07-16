@@ -171,7 +171,7 @@ bar_endianness(BARInfo *bar_info)
 
 #define PCI_NUM_BARS (PCI_NUM_REGIONS - 1)
 
-typedef struct ExternalPCIState {
+struct ExternalPCIState {
     PCIDevice dev;
     NICState *nic;
     NICConf conf;
@@ -182,7 +182,7 @@ typedef struct ExternalPCIState {
     uint32_t flags;
     char *ipc_socket_path;
     uint16_t external_device_id;
-} ExternalPCIState;
+};
 
 static inline bool
 device_big_endian(ExternalPCIState *d)
@@ -410,7 +410,7 @@ static inline uint64_t
 external_pci_read_direct(void *opaque, hwaddr addr, unsigned size)
 {
     uintptr_t base = (uintptr_t)opaque;
-    void *p = (void *)(base + addr);
+    void *p = (void *)(base + (uintptr_t)addr);
     union {
         uint8_t byte;
         uint16_t word;
