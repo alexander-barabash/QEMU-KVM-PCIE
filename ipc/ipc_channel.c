@@ -29,6 +29,30 @@
 #include <sys/un.h>
 #include <errno.h>
 
+#define EXTERNAL_PCI_DEBUG
+#ifdef EXTERNAL_PCI_DEBUG
+enum {
+    DEBUG_GENERAL, DEBUG_CHANNEL_DATA,
+};
+#define DBGBIT(x)	(1<<DEBUG_##x)
+static int debugflags = DBGBIT(GENERAL) | DBGBIT(CHANNEL_DATA);
+
+#define IF_DBGOUT(what, code) do {              \
+        if (debugflags & DBGBIT(what)) {        \
+            code;                               \
+        }                                       \
+    } while (0)
+
+#define DBGPRINT(fmt, ...)                                          \
+    do {                                                            \
+        fprintf(stderr, fmt , ## __VA_ARGS__);                      \
+    } while(0)
+#else
+#define IF_DBGOUT(what, code) do {} while (0)
+#endif
+#define	DBGOUT(what, fmt, ...) \
+    IF_DBGOUT(what, DBGPRINT("external_pci: " fmt "\n", ## __VA_ARGS__))
+
 bool setup_ipc_channel(IPCChannel *channel,
                        const char *socket_path, bool use_abstract_path)
 {
@@ -94,6 +118,14 @@ bool read_ipc_channel_data(IPCChannel *channel,
         if (len <= 0) {
             return false;
         }
+        IF_DBGOUT(CHANNEL_DATA, {
+                ssize_t ii;
+                DBGPRINT("read_ipc_channel_data: ");
+                for(ii = 0; ii < len; ++ii) {
+                    DBGPRINT("%2.2X", buffer[ii]);
+                }
+                DBGPRINT("\n");
+            });
         size -= len;
         buffer += len;
     }
@@ -105,6 +137,13 @@ bool write_ipc_channel_data(IPCChannel *channel,
 {
     const uint8_t *buffer = data;
     ssize_t len;
+    IF_DBGOUT(CHANNEL_DATA, {
+            DBGPRINT("write_ipc_channel_data: ");
+            for(len = 0; (size_t)len < size; ++len) {
+                DBGPRINT("%2.2X", ((uint8_t *)data)[len]);
+            }
+            DBGPRINT("\n");
+        });
     while (size > 0) {
         len = write(channel->fd, buffer, size);
         if (len == -1 && errno == EINTR) {

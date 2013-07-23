@@ -319,8 +319,13 @@ static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
     }
     r->addr = new_addr;
     if (r->addr != PCI_BAR_UNMAPPED) {
+        DBGOUT(GENERAL, "pci_update_region_mapping in %s: address=%llx\n",
+               d->name, (unsigned long long)r->addr);
         memory_region_add_subregion_overlap(r->address_space,
                                             r->addr, r->memory, 1);
+    } else {
+        DBGOUT(GENERAL, "pci_update_region_mapping in %s: region disabled\n",
+               d->name);
     }
 }
 
@@ -339,6 +344,8 @@ static void pci_update_bar_mapping(PCIDevice *dev, uint16_t pci_command,
 
     base_address = retrieve_pci_base_address(dev, index, pci_command,
                                              &is_io, &is_64bit);
+    DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: address=%llx is_io=%d is_64bit=%d\n",
+           dev->name, index, (unsigned long long)base_address, is_io, is_64bit);
     d->bar_info[index].base_address = base_address;
     pci_update_region_mapping(dev, r, base_address);
 }

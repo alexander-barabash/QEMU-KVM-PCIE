@@ -58,6 +58,8 @@ void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         uint64_t val;
     } data;
     data.val = val;
+    DBGOUT(GENERAL, "write_downstream_pcie_memory %d bytes @ 0x%llX := 0x%llX", size,
+           (unsigned long long)addr, (unsigned long long)data.val);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -72,6 +74,7 @@ void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                        size,
                                        data.bytes);
     pcie_request_done(request);
+    DBGOUT(GENERAL, "write_downstream_pcie_memory %d bytes @ 0x%llX done", size, (unsigned long long)addr);
 }
 
 uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
@@ -87,6 +90,7 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         uint64_t val;
     } data;
     data.val = 0;
+    DBGOUT(GENERAL, "read_downstream_pcie_memory %d bytes @ 0x%llX", size, (unsigned long long)addr);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -105,6 +109,8 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
     }
     pcie_request_done(request);
+    DBGOUT(GENERAL, "read_downstream_pcie_memory %d bytes @ 0x%llX = 0x%llX", size,
+           (unsigned long long)addr, (unsigned long long)data.val);
     return data.val;
 }
 
@@ -120,6 +126,8 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = val;
+    DBGOUT(GENERAL, "write_downstream_pcie_io %d bytes @ 0x%llX := 0x%X", size,
+           (unsigned long long)addr, data.val);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -135,6 +143,7 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
                                    data.bytes);
     wait_on_pcie_request(request);
     pcie_request_done(request);
+    DBGOUT(GENERAL, "write_downstream_pcie_io %d bytes @ 0x%llX done", size, (unsigned long long)addr);
 }
 
 uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
@@ -150,6 +159,7 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = 0;
+    DBGOUT(GENERAL, "read_downstream_pcie_io %d bytes @ 0x%llX", size, (unsigned long long)addr);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -168,6 +178,8 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
     }
     pcie_request_done(request);
+    DBGOUT(GENERAL, "read_downstream_pcie_io %d bytes @ 0x%llX = 0x%X", size,
+           (unsigned long long)addr, data.val);
     return data.val;
 }
 
@@ -183,6 +195,7 @@ void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = val;
+    DBGOUT(GENERAL, "write_downstream_pcie_config %d bytes @ 0x%X := 0x%X", size, addr, val);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -202,6 +215,7 @@ void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
                                        data.bytes);
     wait_on_pcie_request(request);
     pcie_request_done(request);
+    DBGOUT(GENERAL, "write_downstream_pcie_config %d bytes @ 0x%X done.", size, addr);
 }
 
 uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
@@ -217,6 +231,7 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = 0;
+    DBGOUT(GENERAL, "read_downstream_pcie_config %d bytes @ 0x%X", size, addr);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -239,6 +254,7 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
     }
     pcie_request_done(request);
+    DBGOUT(GENERAL, "read_downstream_pcie_config %d bytes @ 0x%X = 0x%X", size, addr, data.val);
     return data.val;
 }
 
@@ -249,7 +265,7 @@ void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
     PCIeRequest *request;
     uint16_t requester_id = pcie_requester_id(pci_dev);
     uint8_t tag;
-    DBGOUT(REQUESTS, "in send_special_downstream_pcie_request for device %s\n", pci_dev->name);
+    DBGOUT(REQUESTS, "in send_special_downstream_pcie_request for device %s", pci_dev->name);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -257,7 +273,7 @@ void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
         error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
         return;
     } else {
-        DBGOUT(REQUESTS, "Allocated PCIe request for device %s\n", pci_dev->name);
+        DBGOUT(REQUESTS, "Allocated PCIe request for device %s", pci_dev->name);
     }
     if (!send_ipc_pcie_special_request(&connection->connection.channel,
                                        requester_id,
