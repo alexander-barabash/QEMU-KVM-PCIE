@@ -22,15 +22,33 @@
 #include "config-host.h"
 #include "ipc/pcie/requesters_table.h"
 
+#define EXTERNAL_PCI_DEBUG
+#ifdef EXTERNAL_PCI_DEBUG
+enum {
+    DEBUG_GENERAL, DEBUG_REQUESTS,
+};
+#define DBGBIT(x)	(1<<DEBUG_##x)
+static int debugflags = DBGBIT(GENERAL);
+
+#define	DBGOUT(what, fmt, ...) do { \
+    if (debugflags & DBGBIT(what)) \
+        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+    } while (0)
+#else
+#define	DBGOUT(what, fmt, ...) do {} while (0)
+#endif
+
 GHashTable *create_pcie_requesters_table(void)
 {
-    return g_hash_table_new(g_int_hash, g_int_equal);
+    return g_hash_table_new(g_direct_hash, g_direct_equal);
 }
 
 static inline PCIePendingRequests *
 find_pcie_pending_requests(GHashTable *requesters_table, uint16_t requester_id)
 {
-    gpointer key = (gpointer)(uintptr_t)requester_id;
+    gpointer key = GUINT_TO_POINTER(requester_id);
+    DBGOUT(REQUESTS, "find_pcie_pending_requests in table %lx for id %d\n",
+           (long)requesters_table, requester_id);
     return g_hash_table_lookup(requesters_table, key);
 }
 
@@ -40,10 +58,14 @@ get_pcie_pending_requests(GHashTable *requesters_table, uint16_t requester_id)
     PCIePendingRequests *requests =
         find_pcie_pending_requests(requesters_table, requester_id);
     if (requests == NULL) {
+        DBGOUT(REQUESTS, "request not found for id %d\n", requester_id);
         requests = (PCIePendingRequests *)g_malloc0(sizeof(PCIePendingRequests));
         g_hash_table_replace(requesters_table,
-                             (gpointer)(uintptr_t)requester_id,
+                             GUINT_TO_POINTER(requester_id),
                              requests);
+        DBGOUT(REQUESTS, "request allocated for id %d\n", requester_id);
+    } else {
+        DBGOUT(REQUESTS, "request found for id %d\n", requester_id);
     }
     return requests;
 }

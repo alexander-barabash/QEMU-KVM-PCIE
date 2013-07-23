@@ -30,6 +30,22 @@
 #include "qemu/error-report.h"
 #include <glib.h>
 
+#define EXTERNAL_PCI_DEBUG
+#ifdef EXTERNAL_PCI_DEBUG
+enum {
+    DEBUG_GENERAL, DEBUG_REQUESTS,
+};
+#define DBGBIT(x)	(1<<DEBUG_##x)
+static int debugflags = DBGBIT(GENERAL);
+
+#define	DBGOUT(what, fmt, ...) do { \
+    if (debugflags & DBGBIT(what)) \
+        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+    } while (0)
+#else
+#define	DBGOUT(what, fmt, ...) do {} while (0)
+#endif
+
 void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                   PCIDevice *pci_dev,
                                   hwaddr addr, uint64_t val, unsigned size)
@@ -233,12 +249,15 @@ void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
     PCIeRequest *request;
     uint16_t requester_id = pcie_requester_id(pci_dev);
     uint8_t tag;
+    DBGOUT(REQUESTS, "in send_special_downstream_pcie_request for device %s\n", pci_dev->name);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
                                &tag)) {
         error_report("Cannot allocate PCIe request for device %s\n", pci_dev->name);
         return;
+    } else {
+        DBGOUT(REQUESTS, "Allocated PCIe request for device %s\n", pci_dev->name);
     }
     if (!send_ipc_pcie_special_request(&connection->connection.channel,
                                        requester_id,

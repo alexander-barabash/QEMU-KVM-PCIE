@@ -31,7 +31,7 @@
 #define EXTERNAL_PCI_DEBUG
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
-    DEBUG_GENERAL,
+    DEBUG_GENERAL, DEBUG_INITIAL,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
 static int debugflags = DBGBIT(GENERAL);
@@ -591,12 +591,19 @@ static int pci_external_init(PCIDevice *pci_dev)
                                  d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR),
                                  pci_dev);
     if (d->ipc_connection == NULL) {
+        error_report("Failed to establish IPC connection on path %s (flag=%d)\n",
+                     d->ipc_socket_path, (d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR)));
         return -1;
+    } else {
+        DBGOUT(INITIAL, "Established IPC connection on path %s (flag=%d)\n",
+               d->ipc_socket_path, (d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR)));
     }
 
     send_special_downstream_pcie_request(d->ipc_connection,
                                          pci_dev,
                                          d->external_device_id);
+    DBGOUT(INITIAL, "Sent special PCI request for device %s (ID=%d)\n",
+           pci_dev->name, d->external_device_id);
 
     for (i = 0; i < PCI_NUM_BARS; ++i, ++bar_info, ++io_region) {
         bar_info->dev = d;

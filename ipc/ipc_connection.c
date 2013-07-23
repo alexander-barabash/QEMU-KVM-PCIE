@@ -26,6 +26,22 @@
 #include <glib.h>
 #include <string.h>
 
+#define EXTERNAL_PCI_DEBUG
+#ifdef EXTERNAL_PCI_DEBUG
+enum {
+    DEBUG_GENERAL, DEBUG_REQUESTS,
+};
+#define DBGBIT(x)	(1<<DEBUG_##x)
+static int debugflags = DBGBIT(GENERAL);
+
+#define	DBGOUT(what, fmt, ...) do { \
+    if (debugflags & DBGBIT(what)) \
+        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+    } while (0)
+#else
+#define	DBGOUT(what, fmt, ...) do {} while (0)
+#endif
+
 static gpointer ipc_input_thread(gpointer opaque)
 {
     IPCConnection *connection = opaque;
@@ -38,9 +54,12 @@ static gpointer ipc_input_thread(gpointer opaque)
         unsigned packet_size;
 
         if (!read_ipc_channel_data(&connection->channel, header, header_size)) {
+            DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
             exit(0);
             break;
+        } else {
+            DBGOUT(GENERAL, "read_ipc_channel_data success\n");
         }
         packet_size = sizer->get_packet_size(header);
         packet = g_malloc0(sizeof(IPCPacket) + packet_size);
@@ -48,9 +67,12 @@ static gpointer ipc_input_thread(gpointer opaque)
         if (!read_ipc_channel_data(&connection->channel,
                                    ipc_packet_data(packet) + header_size,
                                    packet_size - header_size)) {
+            DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
             exit(0);
             break;
+        } else {
+            DBGOUT(GENERAL, "read_ipc_channel_data success\n");
         }
         g_async_queue_push(connection->incoming, packet);
         qemu_bh_schedule(connection->bh);
