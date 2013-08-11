@@ -54,6 +54,7 @@ enum {
     BIG_ENDIAN_FLAG_NR,
     LITTLE_ENDIAN_FLAG_NR,
     PREFETCHABLE_FLAG_NR,
+    ROM_FLAG_NR,
     RAM_FLAG_NR,
     IO_FLAG_NR,
     MEM_64BIT_FLAG_NR,
@@ -63,6 +64,7 @@ typedef struct ExternalPCIState ExternalPCIState;
 typedef struct BARInfo {
     char *name;
     uint32_t flags;
+    uint32_t last_written_value;
     QemuMappedFileData file_data;
     MemoryRegion region;
     MemoryRegionOps ops;
@@ -128,6 +130,24 @@ bar_is_ram(BARInfo *bar_info)
 }
 
 static inline bool
+bar_is_rom(BARInfo *bar_info)
+{
+    return ((bar_info->flags & (1 << ROM_FLAG_NR)) != 0);
+}
+
+static inline bool
+bar_is_ram_or_rom(BARInfo *bar_info)
+{
+    return bar_is_ram(bar_info) || bar_is_rom(bar_info);
+}
+
+static inline void
+bar_set_rom(BARInfo *bar_info)
+{
+    bar_info->flags |= (1 << ROM_FLAG_NR);
+}
+
+static inline bool
 bar_prefetchable(BARInfo *bar_info)
 {
     return ((bar_info->flags & (1 << PREFETCHABLE_FLAG_NR)) != 0);
@@ -178,6 +198,7 @@ struct ExternalPCIState {
 
     DownstreamPCIeConnection *ipc_connection;
     BARInfo bar_info[PCI_NUM_REGIONS];
+    uint32_t last_written_pci_command;
 
     uint32_t flags;
     char *ipc_socket_path;
@@ -231,7 +252,7 @@ pci_external_uninit(PCIDevice *dev)
     BARInfo *bar_info = d->bar_info;
     int i;
 
-    for (i = 0; i < PCI_NUM_BARS; ++i) {
+    for (i = 0; i < PCI_NUM_REGIONS; ++i) {
         memory_region_destroy(&bar_info[i].region);
         qemu_unmap_file_data(&bar_info[i].file_data);
     }
@@ -247,62 +268,6 @@ external_pci_config_read(PCIDevice *dev, uint32_t address, int len)
            address, len);
     return read_downstream_pcie_config(d->ipc_connection,
                                        dev, address, len);
-}
-
-static uint16_t
-retrieve_pci_command(PCIDevice *pci_dev)
-{
-    return (uint16_t)external_pci_config_read(pci_dev, PCI_COMMAND, 2);
-}
-
-static uint32_t
-retrieve_pci_bar(PCIDevice *pci_dev, int index)
-{
-    return external_pci_config_read(pci_dev, PCI_BASE_ADDRESS_0 + index * 4, 4);
-}
-
-static pcibus_t
-retrieve_pci_rom_address(PCIDevice *pci_dev)
-{
-    uint32_t address = external_pci_config_read(pci_dev, PCI_ROM_ADDRESS, 4);
-    if ((address & PCI_ROM_ADDRESS_ENABLE) == 0) {
-        return PCI_BAR_UNMAPPED;
-    }
-    return address & PCI_ROM_ADDRESS_MASK;
-}
-
-static pcibus_t
-retrieve_pci_base_address(PCIDevice *pci_dev, int index, uint16_t pci_command,
-                          bool *is_io, bool *is_64bit)
-{
-    bool memory_enabled = (pci_command & PCI_COMMAND_MEMORY) != 0;
-    bool io_enabled = (pci_command & PCI_COMMAND_IO) != 0;
-    uint32_t address;
-
-    if (!memory_enabled && !io_enabled) {
-        return PCI_BAR_UNMAPPED;
-    }
-    address = retrieve_pci_bar(pci_dev, index);
-    *is_io = ((address & PCI_BASE_ADDRESS_SPACE_IO) != 0);
-    if (*is_io) {
-        if (!io_enabled) {
-            return PCI_BAR_UNMAPPED;
-        }
-        *is_64bit = false;
-        return address & PCI_BASE_ADDRESS_IO_MASK;
-    } else {
-        if (!memory_enabled) {
-            return PCI_BAR_UNMAPPED;
-        }
-        *is_64bit = ((address & PCI_BASE_ADDRESS_MEM_TYPE_64) != 0);
-        address = address & PCI_BASE_ADDRESS_MEM_MASK;
-        if (*is_64bit) {
-            return ((pcibus_t)retrieve_pci_bar(pci_dev, index + 1) << 32) +
-                address;
-        } else {
-            return address;
-        }
-    }
 }
 
 static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
@@ -329,12 +294,41 @@ static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
     }
 }
 
+static void update_last_written_value(uint32_t *last_written_value,
+                                      uint32_t addr, uint32_t val, int l)
+{
+    switch (l) {
+    default:
+        break;
+    case 4:
+        *last_written_value = val;
+        break;
+    case 2:
+    case 1:
+        {
+            uint32_t sh = ((addr & (4 - l)) * 8);
+            uint32_t val_mask = (1 << (l * 8)) - 1;
+            uint32_t old_value_mask = ~(val_mask << sh);
+            val &= val_mask;
+            *last_written_value &= old_value_mask;
+            *last_written_value |= (val << sh);
+        }
+        break;
+    }
+}
+
+static void pci_bar_update_last_written_value(BARInfo *bar_info, uint32_t addr,
+                                              uint32_t val, int l)
+{
+    update_last_written_value(&bar_info->last_written_value, addr, val, l);
+}
+
 static void pci_update_bar_mapping(PCIDevice *dev, uint16_t pci_command,
                                    int index)
 {
     ExternalPCIState *d = DO_UPCAST(ExternalPCIState, dev, dev);
-    bool is_io, is_64bit;
     PCIIORegion *r = &dev->io_regions[index];
+    BARInfo *bar_info = &d->bar_info[index];
     pcibus_t base_address;
 
     /* this region isn't registered */
@@ -342,24 +336,49 @@ static void pci_update_bar_mapping(PCIDevice *dev, uint16_t pci_command,
         return;
     }
 
-    base_address = retrieve_pci_base_address(dev, index, pci_command,
-                                             &is_io, &is_64bit);
-    DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: address=%llx is_io=%d is_64bit=%d\n",
-           dev->name, index, (unsigned long long)base_address, is_io, is_64bit);
+    base_address = bar_info->last_written_value;
+    if (bar_is_rom(bar_info)) {
+        if ((pci_command & PCI_COMMAND_MEMORY) != 0) {
+            if ((base_address & PCI_ROM_ADDRESS_ENABLE) == 0) {
+                base_address = PCI_BAR_UNMAPPED;
+            } else {
+                base_address &= PCI_ROM_ADDRESS_MASK;
+            }
+        } else {
+            base_address = PCI_BAR_UNMAPPED;
+        }
+    } else if (bar_is_io(bar_info)) {
+        if ((pci_command & PCI_COMMAND_IO) != 0) {
+            base_address &= PCI_BASE_ADDRESS_IO_MASK;
+        } else {
+            base_address = PCI_BAR_UNMAPPED;
+        }
+    } else {
+        if ((pci_command & PCI_COMMAND_MEMORY) != 0) {
+            base_address &= PCI_BASE_ADDRESS_MEM_MASK;
+            if (bar_is_64bit(bar_info)) {
+                BARInfo *bar_info2 = &d->bar_info[index + 1];
+                pcibus_t base_address2 = bar_info2->last_written_value;
+                base_address |= base_address2 << 32;
+            }
+        } else {
+            base_address = PCI_BAR_UNMAPPED;
+        }
+    }
+    if (base_address != PCI_BAR_UNMAPPED) {
+        base_address &= ~(bar_size(bar_info) - 1);
+        DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: "
+               "address=%llx is_rom=%d is_io=%d is_64bit=%d\n",
+               dev->name, index, (unsigned long long)base_address,
+               bar_is_rom(bar_info), bar_is_io(bar_info), bar_is_64bit(bar_info));
+    } else {
+        DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: "
+               "address=UNMAPPED is_rom=%d is_io=%d is_64bit=%d\n",
+               dev->name, index,
+               bar_is_rom(bar_info), bar_is_io(bar_info), bar_is_64bit(bar_info));
+    }
     d->bar_info[index].base_address = base_address;
     pci_update_region_mapping(dev, r, base_address);
-}
-
-static void pci_update_rom_mapping(PCIDevice *d)
-{
-    PCIIORegion *r = &d->io_regions[PCI_NUM_BARS];
-
-    /* this region isn't registered */
-    if (!r->size) {
-        return;
-    }
-
-    pci_update_region_mapping(d, r, retrieve_pci_rom_address(d));
 }
 
 static void pci_update_all_bar_mappings(PCIDevice *d, uint16_t pci_command)
@@ -369,7 +388,6 @@ static void pci_update_all_bar_mappings(PCIDevice *d, uint16_t pci_command)
     for(i = 0; i < PCI_NUM_REGIONS; i++) {
         pci_update_bar_mapping(d, pci_command, i);
     }
-    pci_update_rom_mapping(d);
 }
 
 static void
@@ -382,7 +400,7 @@ external_pci_config_write(PCIDevice *dev, uint32_t addr, uint32_t val,
     bool was_irq_disabled = 0;
     if (covers_pci_command) {
         was_irq_disabled =
-            (retrieve_pci_command(dev) & PCI_COMMAND_INTX_DISABLE) != 0;
+            (d->last_written_pci_command & PCI_COMMAND_INTX_DISABLE) != 0;
     }
 #endif
 
@@ -390,22 +408,25 @@ external_pci_config_write(PCIDevice *dev, uint32_t addr, uint32_t val,
                                  dev, addr, val, l);
 
     if (covers_pci_command) {
-        uint16_t pci_command = retrieve_pci_command(dev);
-        pci_update_all_bar_mappings(dev, pci_command);
+        update_last_written_value(&d->last_written_pci_command, addr, val, l);
+        pci_update_all_bar_mappings(dev, d->last_written_pci_command);
 #if 0
         pci_update_irq_disabled(d, was_irq_disabled);
 #endif
         memory_region_set_enabled(&dev->bus_master_enable_region,
-                                  pci_command & PCI_COMMAND_MASTER);
+                                  d->last_written_pci_command & PCI_COMMAND_MASTER);
         memory_region_set_enabled(&dev->bus_master_io_enable_region,
-                                  pci_command & PCI_COMMAND_MASTER);
+                                  d->last_written_pci_command & PCI_COMMAND_MASTER);
     } else if (addr >= PCI_BASE_ADDRESS_0) {
         int index = (addr - PCI_BASE_ADDRESS_0) / 4;
-        if (index < PCI_NUM_BARS) {
-            pci_update_bar_mapping(dev, retrieve_pci_command(dev),
+        if (index == (PCI_ROM_ADDRESS - PCI_BASE_ADDRESS_0) / 4) {
+            index = PCI_ROM_SLOT;
+        }
+        if (index < PCI_NUM_REGIONS) {
+            pci_bar_update_last_written_value(&d->bar_info[index],
+                                              addr, val, l);
+            pci_update_bar_mapping(dev, d->last_written_pci_command,
                                    index);
-        } else if (index == (PCI_ROM_ADDRESS - PCI_BASE_ADDRESS_0) / 4) {
-            pci_update_rom_mapping(dev);
         }
     }
 
@@ -591,8 +612,9 @@ static int pci_external_init(PCIDevice *pci_dev)
     BARInfo *bar_info = d->bar_info;
     PCIIORegion *io_region = pci_dev->io_regions;
     bool upper_bar = false;
-    int i;
+    int ii;
 
+    d->last_written_pci_command = 0;
     d->ipc_connection =
         init_pcie_downstream_ipc(d->ipc_socket_path,
                                  d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR),
@@ -612,61 +634,98 @@ static int pci_external_init(PCIDevice *pci_dev)
     DBGOUT(INITIAL, "Sent special PCI request for device %s (ID=%d)\n",
            pci_dev->name, d->external_device_id);
 
-    for (i = 0; i < PCI_NUM_BARS; ++i, ++bar_info, ++io_region) {
+    for (ii = 0; ii < PCI_NUM_REGIONS; ++ii, ++bar_info, ++io_region) {
         bar_info->dev = d;
+        bar_info->last_written_value = 0;
         bar_update_size(bar_info);
         if (upper_bar) {
             upper_bar = false;
             if (bar_info->flags != 0) {
                 error_report("Attempt to use PCI bar %d twice for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
             if (bar_size(bar_info) != 0) {
                 error_report("Attempt to use PCI bar %d twice for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
+            continue;
         } else if (bar_size(bar_info) == 0) {
             if (bar_info->flags == 0) {
                 continue;
             } else {
                 error_report("Size of PCI bar %d unspecified for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
+        }
+        if (ii == PCI_ROM_SLOT) {
+            bar_set_rom(bar_info);
         }
 
         if (!bar_size_power_of_two(bar_info)) {
             error_report("Size of PCI bar %d (%" PRIu64 ")"
                          " is not a power of two"
                          " for device %s\n",
-                         i, bar_size(bar_info), pci_dev->name);
+                         ii, bar_size(bar_info), pci_dev->name);
             return -1;
         }
 
         bar_update_endianness(bar_info, d);
-        
+
         if ((bar_info->name == NULL) || (*bar_info->name == '\0')) {
-            bar_info->name = g_strdup_printf("%s-bar%d", pci_dev->name, i);
+            if (ii == PCI_ROM_SLOT) {
+                bar_info->name = g_strdup_printf("%s-rom", pci_dev->name);
+            } else {
+                bar_info->name = g_strdup_printf("%s-bar%d", pci_dev->name, ii);
+            }
         }
-        
-        if (bar_is_io(bar_info)) {
+
+        if (bar_is_rom(bar_info)) {
+            if (bar_is_ram(bar_info)) {
+                error_report("ROM PCI bar specified as RAM for device %s\n",
+                             pci_dev->name);
+                return -1;
+            }
+            if (bar_is_64bit(bar_info)) {
+                error_report("ROM PCI bar specified as 64-bit"
+                             " for device %s\n",
+                             pci_dev->name);
+                return -1;
+            }
+            if(!bar_file(bar_info)) {
+                error_report("File for ROM PCI bar"
+                             " for device %s unspecified\n",
+                             pci_dev->name);
+                return -1;
+            }
+            if(!qemu_map_file_data(&bar_info->file_data)) {
+                error_report("Cannot map file \"%s\" for ROM PCI bar"
+                             " for device %s\n",
+                             bar_file(bar_info), pci_dev->name);
+                    return -1;
+            }
+            io_region->type = PCI_BASE_ADDRESS_SPACE_MEMORY;
+            io_region->type |= PCI_BASE_ADDRESS_MEM_TYPE_32;
+            io_region->type |= PCI_BASE_ADDRESS_MEM_PREFETCH;
+            io_region->address_space = address_space_memory;
+        } else if (bar_is_io(bar_info)) {
             if (bar_is_ram(bar_info)) {
                 error_report("I/O PCI bar %d specified as RAM for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
             if (bar_prefetchable(bar_info)) {
                 error_report("I/O PCI bar %d specified as prefetchable"
                              " for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
             if (bar_is_64bit(bar_info)) {
                 error_report("I/O PCI bar %d specified as 64-bit"
                              " for device %s\n",
-                             i, pci_dev->name);
+                             ii, pci_dev->name);
                 return -1;
             }
             io_region->type = PCI_BASE_ADDRESS_SPACE_IO;
@@ -674,10 +733,10 @@ static int pci_external_init(PCIDevice *pci_dev)
         } else {
             io_region->type = PCI_BASE_ADDRESS_SPACE_MEMORY;
             if (bar_is_64bit(bar_info)) {
-                if (i + 1 >= PCI_NUM_BARS) {
+                if (ii + 1 >= PCI_NUM_BARS) {
                     error_report("Last PCI bar %d cannot be 64-bit"
                                  " for device %s\n",
-                                 i, pci_dev->name);
+                                 ii, pci_dev->name);
                     return -1;
                 }
                 upper_bar = true;
@@ -686,7 +745,7 @@ static int pci_external_init(PCIDevice *pci_dev)
                 if (bar_size(bar_info) > 0xFFFFFFFFu) {
                     error_report("Size of 32-bit PCI bar %d (%" PRIu64 ")"
                                  " cannot be 64-bit for device %s\n",
-                                 i, bar_size(bar_info), pci_dev->name);
+                                 ii, bar_size(bar_info), pci_dev->name);
                     return -1;
                 }
                 io_region->type |= PCI_BASE_ADDRESS_MEM_TYPE_32;
@@ -697,7 +756,7 @@ static int pci_external_init(PCIDevice *pci_dev)
                    !qemu_map_file_data(&bar_info->file_data)) {
                     error_report("Cannot map file \"%s\" for PCI bar %d"
                                  " for device %s\n",
-                                 bar_file(bar_info), i, pci_dev->name);
+                                 bar_file(bar_info), ii, pci_dev->name);
                     return -1;
                 }
                 io_region->type |= PCI_BASE_ADDRESS_MEM_PREFETCH;
@@ -709,7 +768,8 @@ static int pci_external_init(PCIDevice *pci_dev)
         io_region->size = bar_size(bar_info);
         io_region->memory = &bar_info->region;
 
-        if (bar_is_ram(bar_info) && !is_wrong_endian(bar_endianness(bar_info))) {
+        if (bar_is_ram_or_rom(bar_info) &&
+            !is_wrong_endian(bar_endianness(bar_info))) {
             memory_region_init_ram_ptr(&bar_info->region,
                                        bar_info->name, io_region->size,
                                        bar_info->file_data.pointer);
@@ -723,7 +783,7 @@ static int pci_external_init(PCIDevice *pci_dev)
             ops->valid.min_access_size = 1;
             if (bar_is_io(bar_info)) {
                 ops->valid.max_access_size = 4;
-            } else if(bar_is_ram(bar_info) ||
+            } else if(bar_is_ram_or_rom(bar_info) ||
                       bar_prefetchable(bar_info)) {
                 ops->valid.max_access_size = 8;
             }
@@ -731,7 +791,7 @@ static int pci_external_init(PCIDevice *pci_dev)
             if (bar_is_io(bar_info)) {
                 ops->read = external_pci_read_io;
                 ops->write = external_pci_write_io;
-            } else if (bar_is_ram(bar_info) && bar_file(bar_info)) {
+            } else if (bar_is_ram_or_rom(bar_info) && bar_file(bar_info)) {
                 opaque = bar_info->file_data.pointer;
                 ops->read = external_pci_read_direct;
                 ops->write = external_pci_write_direct;
@@ -751,7 +811,7 @@ static int pci_external_init(PCIDevice *pci_dev)
                                   opaque, bar_info->name, io_region->size);
         }
 
-        if (bar_is_ram(bar_info)) {
+        if (bar_is_ram_or_rom(bar_info)) {
             memory_region_set_coalescing(&bar_info->region);
         }
     }
@@ -806,6 +866,7 @@ static Property external_pci_properties[] = {
     DEFINE_PCI_BAR_PROPS("pci_bar", 3),
     DEFINE_PCI_BAR_PROPS("pci_bar", 4),
     DEFINE_PCI_BAR_PROPS("pci_bar", 5),
+    DEFINE_PCI_BAR_PROPS("pci_bar", 6),
 
     DEFINE_PROP_STRING("ipc_socket_path", ExternalPCIState, ipc_socket_path),
     DEFINE_PROP_UINT16("external_device_id", ExternalPCIState,
