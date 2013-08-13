@@ -162,6 +162,7 @@ $(QEMU_PROGW): $(all-obj-y) ../libqemuutil.a ../libqemustub.a
 $(QEMU_PROG): $(QEMU_PROGW)
 	$(call quiet-command,$(OBJCOPY) --subsystem console $(QEMU_PROGW) $(QEMU_PROG),"  GEN   $(TARGET_DIR)$(QEMU_PROG)")
 else
+$(QEMU_PROG):  LDFLAGS += -Wl,--wrap=memcpy
 $(QEMU_PROG): $(all-obj-y) ../libqemuutil.a ../libqemustub.a
 	$(call LINK,$^)
 endif

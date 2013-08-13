@@ -534,3 +534,9 @@ void qemu_unmap_file_data(QemuMappedFileData *data)
     data->pointer = NULL;
     data->fd = 0;
 }
+
+void *__wrap_memcpy(void *dest, const void *src, size_t n);
+void *__wrap_memcpy(void *dest, const void *src, size_t n)
+{
+    return memmove(dest, src, n);
+}
