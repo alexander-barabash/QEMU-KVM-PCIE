@@ -81,16 +81,20 @@ static gpointer ipc_input_thread(gpointer opaque)
     return NULL;
 }
 
-static inline void init_threads(void)
+static void init_threads(void)
 {
-    if (!g_thread_supported()) {
-#if !GLIB_CHECK_VERSION(2, 31, 0)
-        g_thread_init(NULL);
-#else
-        fprintf(stderr, "glib threading failed to initialize.\n");
-        exit(1);
-#endif
+    static bool already_called;
+    if (already_called) {
+        return;
     }
+    already_called = true;
+    if (glib_major_version != 2) {
+        return;
+    }
+    if (glib_minor_version >= 32) {
+        return;
+    }
+    g_thread_init(NULL);
 }
 
 static void ipc_bh(void *opaque)
@@ -118,7 +122,13 @@ void init_ipc_connection(IPCConnection *connection,
 
 void activate_ipc_connection(IPCConnection *connection)
 {
-    g_thread_create(ipc_input_thread, connection, false, NULL);
+    g_thread_create_full(/* func = */ ipc_input_thread,
+                         /* data = */ connection,
+                         /* stack_size = */ 0,
+                         /* joinable = */ false,
+                         /* bound = */ TRUE,
+                         /* priority = */ G_THREAD_PRIORITY_NORMAL,
+                         /* error = */ NULL);
 }
 
 static GHashTable *get_ipc_connection_table(bool use_abstract_path)
