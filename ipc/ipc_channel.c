@@ -110,12 +110,14 @@ bool read_ipc_channel_data(IPCChannel *channel,
                            uint8_t *buffer, size_t size)
 {
     ssize_t len;
+    DBGOUT(CHANNEL_DATA, "read_ipc_channel_data size=%d", (unsigned)size);
     while (size > 0) {
         len = read(channel->fd, buffer, size);
         if (len == -1 && errno == EINTR) {
             continue;
         }
         if (len <= 0) {
+            DBGOUT(CHANNEL_DATA, "read_ipc_channel_data failed. errno=%d", errno);
             return false;
         }
         IF_DBGOUT(CHANNEL_DATA, {
@@ -150,10 +152,12 @@ bool write_ipc_channel_data(IPCChannel *channel,
             continue;
         }
         if (len <= 0) {
+            DBGOUT(CHANNEL_DATA, "write_ipc_channel_data failed. errno=%d", errno);
             return false;
         }
         size -= len;
         buffer += len;
     }
+    DBGOUT(CHANNEL_DATA, "write_ipc_channel_data success.");
     return true;    
 }
