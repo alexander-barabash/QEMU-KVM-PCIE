@@ -98,13 +98,13 @@ static inline void decode_request(const uint8_t *transaction,
             }
             if (i < 4) {
                 if (decoded->size_in_dw == 1) {
-                    for (j = 3; j >= 0; ++j) {
+                    for (j = 3; j >= 0; --j) {
                         if (decoded->bebits_first_dw[j]) {
                             break;
                         }
                     }
                 } else {
-                    for (j = 3; j >= 0; ++j) {
+                    for (j = 3; j >= 0; --j) {
                         if (decoded->bebits_last_dw[j]) {
                             break;
                         }
