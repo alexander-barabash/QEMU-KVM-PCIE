@@ -108,6 +108,6 @@ PCIeRequest *find_pcie_request(GHashTable *requesters_table,
 void wait_on_pcie_request(PCIeRequest *request)
 {
     do {
-        main_loop_wait(0);
+        qemu_aio_wait();
     } while (!request->ready);
 }
