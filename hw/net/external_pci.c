@@ -615,6 +615,8 @@ static int pci_external_init(PCIDevice *pci_dev)
     int ii;
 
     d->last_written_pci_command = 0;
+    DBGOUT(INITIAL, "Establishing IPC connection on path %s (flag=%d)\n",
+           d->ipc_socket_path, (d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR)));
     d->ipc_connection =
         init_pcie_downstream_ipc(d->ipc_socket_path,
                                  d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR),
