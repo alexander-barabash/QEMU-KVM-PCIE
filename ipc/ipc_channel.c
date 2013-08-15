@@ -35,7 +35,7 @@ enum {
     DEBUG_GENERAL, DEBUG_CHANNEL_DATA,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(CHANNEL_DATA);
+static int debugflags = DBGBIT(GENERAL);
 
 #define IF_DBGOUT(what, code) do {              \
         if (debugflags & DBGBIT(what)) {        \

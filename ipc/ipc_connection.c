@@ -59,7 +59,7 @@ static gpointer ipc_input_thread(gpointer opaque)
             exit(0);
             break;
         } else {
-            DBGOUT(GENERAL, "read_ipc_channel_data success\n");
+            DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
         packet_size = sizer->get_packet_size(header);
         packet = g_malloc0(sizeof(IPCPacket) + packet_size);
@@ -72,7 +72,7 @@ static gpointer ipc_input_thread(gpointer opaque)
             exit(0);
             break;
         } else {
-            DBGOUT(GENERAL, "read_ipc_channel_data success\n");
+            DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
         g_async_queue_push(connection->incoming, packet);
         qemu_bh_schedule(connection->bh);
