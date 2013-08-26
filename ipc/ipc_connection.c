@@ -23,6 +23,7 @@
 #include "ipc/ipc_connection.h"
 #include "qemu/main-loop.h"
 #include "block/aio.h"
+#include "sysemu/sysemu.h"
 #include <glib.h>
 #include <string.h>
 
@@ -56,8 +57,8 @@ static gpointer ipc_input_thread(gpointer opaque)
         if (!read_ipc_channel_data(&connection->channel, header, header_size)) {
             DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
-            exit(0);
-            break;
+            qemu_system_shutdown_request();
+            return NULL;
         } else {
             DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
@@ -69,8 +70,8 @@ static gpointer ipc_input_thread(gpointer opaque)
                                    packet_size - header_size)) {
             DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
-            exit(0);
-            break;
+            qemu_system_shutdown_request();
+            return NULL;
         } else {
             DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
