@@ -95,6 +95,9 @@ static void init_threads(void)
     if (glib_minor_version >= 32) {
         return;
     }
+    if (glib_minor_version < 24) {
+        return;
+    }
     g_thread_init(NULL);
 }
 
