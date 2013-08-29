@@ -103,7 +103,7 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                       tag,
                                       addr,
                                       size);
-    wait_on_pcie_request(request);
+    wait_on_pcie_request(&connection->connection, request);
     decode_completion(request->transaction, &decoded);
     if (size > 0) {
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
@@ -141,7 +141,7 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
                                    addr,
                                    size,
                                    data.bytes);
-    wait_on_pcie_request(request);
+    wait_on_pcie_request(&connection->connection, request);
     pcie_request_done(request);
     DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%llX done", size, (unsigned long long)addr);
 }
@@ -172,7 +172,7 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
                                       tag,
                                       addr,
                                       size);
-    wait_on_pcie_request(request);
+    wait_on_pcie_request(&connection->connection, request);
     decode_completion(request->transaction, &decoded);
     if (size > 0) {
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
@@ -213,7 +213,7 @@ void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
                                        addr,
                                        size,
                                        data.bytes);
-    wait_on_pcie_request(request);
+    wait_on_pcie_request(&connection->connection, request);
     pcie_request_done(request);
     DBGOUT(REQUESTS, "write_downstream_pcie_config %d bytes @ 0x%X done.", size, addr);
 }
@@ -248,7 +248,7 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
                                       PCI_FUNC(pci_dev->devfn),
                                       addr,
                                       size);
-    wait_on_pcie_request(request);
+    wait_on_pcie_request(&connection->connection, request);
     decode_completion(request->transaction, &decoded);
     if (size > 0) {
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);

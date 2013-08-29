@@ -25,6 +25,7 @@
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_sizer.h"
 #include "qemu/typedefs.h"
+#include "block/aio.h"
 #include <glib.h>
 
 typedef struct IPCConnection IPCConnection;
@@ -37,6 +38,7 @@ struct IPCConnection {
     char *kind;
     GAsyncQueue *incoming;
     IPCSizer *ipc_sizer;
+    AioContext *aio_context;
     QEMUBH *bh;
     IPCPacketHandler packet_handler;
 };
@@ -74,6 +76,8 @@ IPCConnection *find_ipc_connection(const char *connection_kind,
 void register_ipc_connection(const char *socket_path,
                              bool use_abstract_path,
                              IPCConnection *connection);
-                             
+
+void wait_on_ipc_connection(IPCConnection *connection,
+                            bool (*wait_function)(void *), void *user_data);
 
 #endif /* QEMU_IPC_CONNECTION_H */

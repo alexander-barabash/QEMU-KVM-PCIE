@@ -66,4 +66,4 @@ static inline void pcie_request_done(PCIeRequest *request) {
     request->waiting = false;
 }
 
-void wait_on_pcie_request(PCIeRequest *request);
+void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request);

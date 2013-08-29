@@ -121,7 +121,8 @@ void init_ipc_connection(IPCConnection *connection,
     connection->incoming = g_async_queue_new();
     connection->ipc_sizer = ipc_sizer;
     connection->packet_handler = packet_handler;
-    connection->bh = qemu_bh_new(ipc_bh, connection);
+    connection->aio_context = qemu_get_aio_context();
+    connection->bh = aio_bh_new(connection->aio_context, ipc_bh, connection);
 }
 
 void activate_ipc_connection(IPCConnection *connection)
@@ -173,4 +174,11 @@ void register_ipc_connection(const char *socket_path,
 {
     GHashTable *table = get_ipc_connection_table(use_abstract_path);
     g_hash_table_replace(table, g_strdup(socket_path), connection);
+}
+
+void wait_on_ipc_connection(IPCConnection *connection,
+                            bool (*wait_function)(void *), void *user_data) {
+    while (!wait_function(user_data)) {
+        aio_poll(connection->aio_context, true);
+    }
 }
