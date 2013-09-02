@@ -37,10 +37,10 @@
 #include "hw/ppc/mac.h"
 #include "hw/pci/pci.h"
 #include "hw/ppc/openpic.h"
+#include "hw/ppc/ppc_e500.h"
 #include "hw/sysbus.h"
 #include "hw/pci/msi.h"
 #include "qemu/bitops.h"
-#include "hw/ppc/ppc.h"
 
 //#define DEBUG_OPENPIC
 
@@ -180,14 +180,11 @@ static int output_to_inttgt(int output)
 
 static int get_current_cpu(void)
 {
-    CPUState *cpu_single_cpu;
-
-    if (!cpu_single_env) {
+    if (!current_cpu) {
         return -1;
     }
 
-    cpu_single_cpu = ENV_GET_CPU(cpu_single_env);
-    return cpu_single_cpu->cpu_index;
+    return current_cpu->cpu_index;
 }
 
 static uint32_t openpic_cpu_read_internal(void *opaque, hwaddr addr,
@@ -1516,8 +1513,8 @@ static void map_list(OpenPICState *opp, const MemReg *list, int *count)
     while (list->name) {
         assert(*count < ARRAY_SIZE(opp->sub_io_mem));
 
-        memory_region_init_io(&opp->sub_io_mem[*count], list->ops, opp,
-                              list->name, list->size);
+        memory_region_init_io(&opp->sub_io_mem[*count], OBJECT(opp), list->ops,
+                              opp, list->name, list->size);
 
         memory_region_add_subregion(&opp->mem, list->start_addr,
                                     &opp->sub_io_mem[*count]);
@@ -1531,7 +1528,7 @@ static void openpic_init(Object *obj)
 {
     OpenPICState *opp = OPENPIC(obj);
 
-    memory_region_init(&opp->mem, "openpic", 0x40000);
+    memory_region_init(&opp->mem, obj, "openpic", 0x40000);
 }
 
 static void openpic_realize(DeviceState *dev, Error **errp)

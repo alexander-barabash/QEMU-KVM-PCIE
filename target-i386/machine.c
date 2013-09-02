@@ -252,6 +252,24 @@ static void cpu_pre_save(void *opaque)
     }
 
     env->fpregs_format_vmstate = 0;
+
+    /*
+     * Real mode guest segments register DPL should be zero.
+     * Older KVM version were setting it wrongly.
+     * Fixing it will allow live migration to host with unrestricted guest
+     * support (otherwise the migration will fail with invalid guest state
+     * error).
+     */
+    if (!(env->cr[0] & CR0_PE_MASK) &&
+        (env->segs[R_CS].flags >> DESC_DPL_SHIFT & 3) != 0) {
+        env->segs[R_CS].flags &= ~(env->segs[R_CS].flags & DESC_DPL_MASK);
+        env->segs[R_DS].flags &= ~(env->segs[R_DS].flags & DESC_DPL_MASK);
+        env->segs[R_ES].flags &= ~(env->segs[R_ES].flags & DESC_DPL_MASK);
+        env->segs[R_FS].flags &= ~(env->segs[R_FS].flags & DESC_DPL_MASK);
+        env->segs[R_GS].flags &= ~(env->segs[R_GS].flags & DESC_DPL_MASK);
+        env->segs[R_SS].flags &= ~(env->segs[R_SS].flags & DESC_DPL_MASK);
+    }
+
 }
 
 static int cpu_post_load(void *opaque, int version_id)
@@ -259,6 +277,24 @@ static int cpu_post_load(void *opaque, int version_id)
     X86CPU *cpu = opaque;
     CPUX86State *env = &cpu->env;
     int i;
+
+    /*
+     * Real mode guest segments register DPL should be zero.
+     * Older KVM version were setting it wrongly.
+     * Fixing it will allow live migration from such host that don't have
+     * restricted guest support to a host with unrestricted guest support
+     * (otherwise the migration will fail with invalid guest state
+     * error).
+     */
+    if (!(env->cr[0] & CR0_PE_MASK) &&
+        (env->segs[R_CS].flags >> DESC_DPL_SHIFT & 3) != 0) {
+        env->segs[R_CS].flags &= ~(env->segs[R_CS].flags & DESC_DPL_MASK);
+        env->segs[R_DS].flags &= ~(env->segs[R_DS].flags & DESC_DPL_MASK);
+        env->segs[R_ES].flags &= ~(env->segs[R_ES].flags & DESC_DPL_MASK);
+        env->segs[R_FS].flags &= ~(env->segs[R_FS].flags & DESC_DPL_MASK);
+        env->segs[R_GS].flags &= ~(env->segs[R_GS].flags & DESC_DPL_MASK);
+        env->segs[R_SS].flags &= ~(env->segs[R_SS].flags & DESC_DPL_MASK);
+    }
 
     /* XXX: restore FPU round state */
     env->fpstt = (env->fpus_vmstate >> 11) & 7;
@@ -399,6 +435,14 @@ static bool misc_enable_needed(void *opaque)
     return env->msr_ia32_misc_enable != MSR_IA32_MISC_ENABLE_DEFAULT;
 }
 
+static bool feature_control_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+
+    return env->msr_ia32_feature_control != 0;
+}
+
 static const VMStateDescription vmstate_msr_ia32_misc_enable = {
     .name = "cpu/msr_ia32_misc_enable",
     .version_id = 1,
@@ -406,6 +450,58 @@ static const VMStateDescription vmstate_msr_ia32_misc_enable = {
     .minimum_version_id_old = 1,
     .fields      = (VMStateField []) {
         VMSTATE_UINT64(env.msr_ia32_misc_enable, X86CPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static const VMStateDescription vmstate_msr_ia32_feature_control = {
+    .name = "cpu/msr_ia32_feature_control",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(env.msr_ia32_feature_control, X86CPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool pmu_enable_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+    int i;
+
+    if (env->msr_fixed_ctr_ctrl || env->msr_global_ctrl ||
+        env->msr_global_status || env->msr_global_ovf_ctrl) {
+        return true;
+    }
+    for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+        if (env->msr_fixed_counters[i]) {
+            return true;
+        }
+    }
+    for (i = 0; i < MAX_GP_COUNTERS; i++) {
+        if (env->msr_gp_counters[i] || env->msr_gp_evtsel[i]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const VMStateDescription vmstate_msr_architectural_pmu = {
+    .name = "cpu/msr_architectural_pmu",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(env.msr_fixed_ctr_ctrl, X86CPU),
+        VMSTATE_UINT64(env.msr_global_ctrl, X86CPU),
+        VMSTATE_UINT64(env.msr_global_status, X86CPU),
+        VMSTATE_UINT64(env.msr_global_ovf_ctrl, X86CPU),
+        VMSTATE_UINT64_ARRAY(env.msr_fixed_counters, X86CPU, MAX_FIXED_COUNTERS),
+        VMSTATE_UINT64_ARRAY(env.msr_gp_counters, X86CPU, MAX_GP_COUNTERS),
+        VMSTATE_UINT64_ARRAY(env.msr_gp_evtsel, X86CPU, MAX_GP_COUNTERS),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -535,6 +631,12 @@ const VMStateDescription vmstate_x86_cpu = {
         }, {
             .vmsd = &vmstate_msr_ia32_misc_enable,
             .needed = misc_enable_needed,
+        }, {
+            .vmsd = &vmstate_msr_ia32_feature_control,
+            .needed = feature_control_needed,
+        }, {
+            .vmsd = &vmstate_msr_architectural_pmu,
+            .needed = pmu_enable_needed,
         } , {
             /* empty */
         }

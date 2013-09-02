@@ -48,6 +48,7 @@ static char *auth_passwd;
 static time_t auth_expires = TIME_MAX;
 static int spice_migration_completed;
 int using_spice = 0;
+int spice_displays;
 
 static QemuThread me;
 
@@ -62,25 +63,25 @@ static SpiceTimer *timer_add(SpiceTimerFunc func, void *opaque)
     SpiceTimer *timer;
 
     timer = g_malloc0(sizeof(*timer));
-    timer->timer = qemu_new_timer_ms(rt_clock, func, opaque);
+    timer->timer = timer_new_ms(QEMU_CLOCK_REALTIME, func, opaque);
     QTAILQ_INSERT_TAIL(&timers, timer, next);
     return timer;
 }
 
 static void timer_start(SpiceTimer *timer, uint32_t ms)
 {
-    qemu_mod_timer(timer->timer, qemu_get_clock_ms(rt_clock) + ms);
+    timer_mod(timer->timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + ms);
 }
 
 static void timer_cancel(SpiceTimer *timer)
 {
-    qemu_del_timer(timer->timer);
+    timer_del(timer->timer);
 }
 
 static void timer_remove(SpiceTimer *timer)
 {
-    qemu_del_timer(timer->timer);
-    qemu_free_timer(timer->timer);
+    timer_del(timer->timer);
+    timer_free(timer->timer);
     QTAILQ_REMOVE(&timers, timer, next);
     g_free(timer);
 }
@@ -563,7 +564,7 @@ static void migration_state_notifier(Notifier *notifier, void *data)
 {
     MigrationState *s = data;
 
-    if (migration_is_active(s)) {
+    if (migration_in_setup(s)) {
         spice_server_migrate_start(spice_server);
     } else if (migration_has_finished(s)) {
         spice_server_migrate_end(spice_server, true);
@@ -834,6 +835,10 @@ int qemu_spice_add_interface(SpiceBaseInstance *sin)
         spice_server = spice_server_new();
         spice_server_init(spice_server, &core_interface);
         qemu_add_vm_change_state_handler(vm_change_state_handler, NULL);
+    }
+
+    if (strcmp(sin->sif->type, SPICE_INTERFACE_QXL) == 0) {
+        spice_displays++;
     }
 
     return spice_server_add_interface(spice_server, sin);

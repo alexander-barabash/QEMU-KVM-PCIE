@@ -79,7 +79,7 @@ void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic)
     v = (s->divide_conf & 3) | ((s->divide_conf >> 1) & 4);
     s->count_shift = (v + 1) & 7;
 
-    s->initial_count_load_time = qemu_get_clock_ns(vm_clock);
+    s->initial_count_load_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     apic_next_timer(s, s->initial_count_load_time);
 }
 
@@ -173,7 +173,7 @@ static const MemoryRegionOps kvm_apic_io_ops = {
 
 static void kvm_apic_init(APICCommonState *s)
 {
-    memory_region_init_io(&s->io_memory, &kvm_apic_io_ops, s, "kvm-apic-msi",
+    memory_region_init_io(&s->io_memory, NULL, &kvm_apic_io_ops, s, "kvm-apic-msi",
                           APIC_SPACE_SIZE);
 
     if (kvm_has_gsi_routing()) {

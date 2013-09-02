@@ -64,8 +64,13 @@ typedef struct {
     qemu_irq irq;
 } CadenceTimerState;
 
-typedef struct {
-    SysBusDevice busdev;
+#define TYPE_CADENCE_TTC "cadence_ttc"
+#define CADENCE_TTC(obj) \
+    OBJECT_CHECK(CadenceTTCState, (obj), TYPE_CADENCE_TTC)
+
+typedef struct CadenceTTCState {
+    SysBusDevice parent_obj;
+
     MemoryRegion iomem;
     CadenceTimerState timer[3];
 } CadenceTTCState;
@@ -167,7 +172,7 @@ static void cadence_timer_run(CadenceTimerState *s)
     event_interval = next_value - (int64_t)s->reg_value;
     event_interval = (event_interval < 0) ? -event_interval : event_interval;
 
-    qemu_mod_timer(s->timer, s->cpu_time +
+    timer_mod(s->timer, s->cpu_time +
                 cadence_timer_get_ns(s, event_interval));
 }
 
@@ -179,7 +184,7 @@ static void cadence_timer_sync(CadenceTimerState *s)
             (int64_t)s->reg_interval + 1 : 0x10000ULL) << 16;
     uint64_t old_time = s->cpu_time;
 
-    s->cpu_time = qemu_get_clock_ns(vm_clock);
+    s->cpu_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     DB_PRINT("cpu time: %lld ns\n", (long long)old_time);
 
     if (!s->cpu_time_valid || old_time == s->cpu_time) {
@@ -396,12 +401,12 @@ static void cadence_timer_init(uint32_t freq, CadenceTimerState *s)
 
     cadence_timer_reset(s);
 
-    s->timer = qemu_new_timer_ns(vm_clock, cadence_timer_tick, s);
+    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, cadence_timer_tick, s);
 }
 
 static int cadence_ttc_init(SysBusDevice *dev)
 {
-    CadenceTTCState *s = FROM_SYSBUS(CadenceTTCState, dev);
+    CadenceTTCState *s = CADENCE_TTC(dev);
     int i;
 
     for (i = 0; i < 3; ++i) {
@@ -409,7 +414,8 @@ static int cadence_ttc_init(SysBusDevice *dev)
         sysbus_init_irq(dev, &s->timer[i].irq);
     }
 
-    memory_region_init_io(&s->iomem, &cadence_ttc_ops, s, "timer", 0x1000);
+    memory_region_init_io(&s->iomem, OBJECT(s), &cadence_ttc_ops, s,
+                          "timer", 0x1000);
     sysbus_init_mmio(dev, &s->iomem);
 
     return 0;
@@ -475,7 +481,7 @@ static void cadence_ttc_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo cadence_ttc_info = {
-    .name  = "cadence_ttc",
+    .name  = TYPE_CADENCE_TTC,
     .parent = TYPE_SYS_BUS_DEVICE,
     .instance_size  = sizeof(CadenceTTCState),
     .class_init = cadence_ttc_class_init,

@@ -17,12 +17,26 @@ int load_aout(const char *filename, hwaddr addr, int max_sz,
 int load_uimage(const char *filename, hwaddr *ep,
                 hwaddr *loadaddr, int *is_linux);
 
+/**
+ * load_ramdisk:
+ * @filename: Path to the ramdisk image
+ * @addr: Memory address to load the ramdisk to
+ * @max_sz: Maximum allowed ramdisk size (for non-u-boot ramdisks)
+ *
+ * Load a ramdisk image with U-Boot header to the specified memory
+ * address.
+ *
+ * Returns the size of the loaded image on success, -1 otherwise.
+ */
+int load_ramdisk(const char *filename, hwaddr addr, uint64_t max_sz);
+
 ssize_t read_targphys(const char *name,
                       int fd, hwaddr dst_addr, size_t nbytes);
 void pstrcpy_targphys(const char *name,
                       hwaddr dest, int buf_size,
                       const char *source);
 
+extern bool rom_file_in_ram;
 
 int rom_add_file(const char *file, const char *fw_dir,
                  hwaddr addr, int32_t bootindex);

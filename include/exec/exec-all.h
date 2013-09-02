@@ -326,18 +326,7 @@ extern uintptr_t tci_tb_ptr;
    (6) jump to corresponding code of the next of fast path
  */
 # if defined(__i386__) || defined(__x86_64__)
-/* To avoid broken disassembling, long jmp is used for embedding fast path pc,
-   so that the destination is the next code of fast path, though this jmp is
-   never executed.
-
-   call MMU helper
-   jmp POST_PROC (2byte)    <- GETRA()
-   jmp NEXT_CODE (5byte)
-   POST_PROCESS ...         <- GETRA() + 7
- */
-#  define GETRA() ((uintptr_t)__builtin_return_address(0))
-#  define GETPC_LDST() ((uintptr_t)(GETRA() + 7 + \
-                                    *(int32_t *)((void *)GETRA() + 3) - 1))
+#  define GETPC_EXT()  GETPC()
 # elif defined (_ARCH_PPC) && !defined (_ARCH_PPC64)
 #  define GETRA() ((uintptr_t)__builtin_return_address(0))
 #  define GETPC_LDST() ((uintptr_t) ((*(int32_t *)(GETRA() - 4)) - 1))
@@ -358,11 +347,27 @@ static inline uintptr_t tcg_getpc_ldst(uintptr_t ra)
                                    not the start of the next opcode  */
     return ra;
 }
+# elif defined(__aarch64__)
+#  define GETRA()       ((uintptr_t)__builtin_return_address(0))
+#  define GETPC_LDST()  tcg_getpc_ldst(GETRA())
+static inline uintptr_t tcg_getpc_ldst(uintptr_t ra)
+{
+    int32_t b;
+    ra += 4;                    /* skip one instruction */
+    b = *(int32_t *)ra;         /* load the branch insn */
+    b = (b << 6) >> (6 - 2);    /* extract the displacement */
+    ra += b;                    /* apply the displacement  */
+    ra -= 4;                    /* return a pointer into the current opcode,
+                                   not the start of the next opcode  */
+    return ra;
+}
 # else
 #  error "CONFIG_QEMU_LDST_OPTIMIZATION needs GETPC_LDST() implementation!"
 # endif
 bool is_tcg_gen_code(uintptr_t pc_ptr);
-# define GETPC_EXT() (is_tcg_gen_code(GETRA()) ? GETPC_LDST() : GETPC())
+# ifndef GETPC_EXT
+#  define GETPC_EXT() (is_tcg_gen_code(GETRA()) ? GETPC_LDST() : GETPC())
+# endif
 #else
 # define GETPC_EXT() GETPC()
 #endif

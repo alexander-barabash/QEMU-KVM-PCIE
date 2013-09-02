@@ -58,6 +58,9 @@
 /* ARM-specific interrupt pending bits.  */
 #define CPU_INTERRUPT_FIQ   CPU_INTERRUPT_TGT_EXT_1
 
+/* Meanings of the ARMCPU object's two inbound GPIO lines */
+#define ARM_CPU_IRQ 0
+#define ARM_CPU_FIQ 1
 
 typedef void ARMWriteCPFunc(void *opaque, int cp_info,
                             int srcreg, int operand, uint32_t value);
@@ -75,6 +78,21 @@ struct arm_boot_info;
    s<2n> maps to the least significant half of d<n>
    s<2n+1> maps to the most significant half of d<n>
  */
+
+/* CPU state for each instance of a generic timer (in cp15 c14) */
+typedef struct ARMGenericTimer {
+    uint64_t cval; /* Timer CompareValue register */
+    uint32_t ctl; /* Timer Control register */
+} ARMGenericTimer;
+
+#define GTIMER_PHYS 0
+#define GTIMER_VIRT 1
+#define NUM_GTIMERS 2
+
+/* Scale factor for generic timers, ie number of ns per tick.
+ * This gives a 62.5MHz timer.
+ */
+#define GTIMER_SCALE 16
 
 typedef struct CPUARMState {
     /* Regs for current mode.  */
@@ -143,6 +161,9 @@ typedef struct CPUARMState {
         uint32_t c13_tls1; /* User RW Thread register.  */
         uint32_t c13_tls2; /* User RO Thread register.  */
         uint32_t c13_tls3; /* Privileged Thread register.  */
+        uint32_t c14_cntfrq; /* Counter Frequency register */
+        uint32_t c14_cntkctl; /* Timer Control register */
+        ARMGenericTimer c14_timer[NUM_GTIMERS];
         uint32_t c15_cpar; /* XScale Coprocessor Access Register */
         uint32_t c15_ticonfig; /* TI925T configuration byte.  */
         uint32_t c15_i_max; /* Maximum D-cache dirty line index.  */
@@ -248,11 +269,6 @@ int cpu_arm_signal_handler(int host_signum, void *pinfo,
 int cpu_arm_handle_mmu_fault (CPUARMState *env, target_ulong address, int rw,
                               int mmu_idx);
 #define cpu_handle_mmu_fault cpu_arm_handle_mmu_fault
-
-static inline void cpu_set_tls(CPUARMState *env, target_ulong newtls)
-{
-  env->cp15.c13_tls2 = newtls;
-}
 
 #define CPSR_M (0x1f)
 #define CPSR_T (1 << 5)
@@ -392,6 +408,7 @@ enum arm_features {
     ARM_FEATURE_MPIDR, /* has cp15 MPIDR */
     ARM_FEATURE_PXN, /* has Privileged Execute Never bit */
     ARM_FEATURE_LPAE, /* has Large Physical Address Extension */
+    ARM_FEATURE_V8,
 };
 
 static inline int arm_feature(CPUARMState *env, int feature)
@@ -473,6 +490,9 @@ static inline uint64_t cpreg_to_kvm_id(uint32_t cpregid)
  * old must have the OVERRIDE bit set.
  * NO_MIGRATE indicates that this register should be ignored for migration;
  * (eg because any state is accessed via some other coprocessor register).
+ * IO indicates that this register does I/O and therefore its accesses
+ * need to be surrounded by gen_io_start()/gen_io_end(). In particular,
+ * registers which implement clocks or timers require this.
  */
 #define ARM_CP_SPECIAL 1
 #define ARM_CP_CONST 2
@@ -480,13 +500,14 @@ static inline uint64_t cpreg_to_kvm_id(uint32_t cpregid)
 #define ARM_CP_SUPPRESS_TB_END 8
 #define ARM_CP_OVERRIDE 16
 #define ARM_CP_NO_MIGRATE 32
+#define ARM_CP_IO 64
 #define ARM_CP_NOP (ARM_CP_SPECIAL | (1 << 8))
 #define ARM_CP_WFI (ARM_CP_SPECIAL | (2 << 8))
 #define ARM_LAST_SPECIAL ARM_CP_WFI
 /* Used only as a terminator for ARMCPRegInfo lists */
 #define ARM_CP_SENTINEL 0xffff
 /* Mask of only the flag bits in a type field */
-#define ARM_CP_FLAG_MASK 0x3f
+#define ARM_CP_FLAG_MASK 0x7f
 
 /* Return true if cptype is a valid type field. This is used to try to
  * catch errors where the sentinel has been accidentally left off the end
@@ -734,15 +755,6 @@ static inline int cpu_mmu_index (CPUARMState *env)
     return (env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_USR ? 1 : 0;
 }
 
-#if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUARMState *env, target_ulong newsp)
-{
-    if (newsp)
-        env->regs[13] = newsp;
-    env->regs[0] = 0;
-}
-#endif
-
 #include "exec/cpu-all.h"
 
 /* Bit usage in the TB flags field: */
@@ -809,11 +821,6 @@ static inline bool cpu_has_work(CPUState *cpu)
 }
 
 #include "exec/exec-all.h"
-
-static inline void cpu_pc_from_tb(CPUARMState *env, TranslationBlock *tb)
-{
-    env->regs[15] = tb->pc;
-}
 
 /* Load an instruction and return it in the standard little-endian order */
 static inline uint32_t arm_ldl_code(CPUARMState *env, uint32_t addr,

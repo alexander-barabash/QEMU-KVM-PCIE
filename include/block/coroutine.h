@@ -16,6 +16,7 @@
 #define QEMU_COROUTINE_H
 
 #include <stdbool.h>
+#include "qemu/typedefs.h"
 #include "qemu/queue.h"
 #include "qemu/timer.h"
 
@@ -130,12 +131,17 @@ void coroutine_fn qemu_co_queue_wait_insert_head(CoQueue *queue);
  *
  * Returns true if a coroutine was restarted, false if the queue is empty.
  */
-bool qemu_co_queue_next(CoQueue *queue);
+bool coroutine_fn qemu_co_queue_next(CoQueue *queue);
 
 /**
  * Restarts all coroutines in the CoQueue and leaves the queue empty.
  */
-void qemu_co_queue_restart_all(CoQueue *queue);
+void coroutine_fn qemu_co_queue_restart_all(CoQueue *queue);
+
+/**
+ * Enter the next coroutine in the queue
+ */
+bool qemu_co_enter_next(CoQueue *queue);
 
 /**
  * Checks if the CoQueue is empty.
@@ -207,7 +213,7 @@ void qemu_co_rwlock_unlock(CoRwlock *lock);
  * Note this function uses timers and hence only works when a main loop is in
  * use.  See main-loop.h and do not use from qemu-tool programs.
  */
-void coroutine_fn co_sleep_ns(QEMUClock *clock, int64_t ns);
+void coroutine_fn co_sleep_ns(QEMUClockType type, int64_t ns);
 
 /**
  * Yield until a file descriptor becomes readable

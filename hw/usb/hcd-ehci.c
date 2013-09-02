@@ -150,7 +150,7 @@ typedef enum {
 #define NLPTR_TYPE_FSTN          3     // frame span traversal node
 
 #define SET_LAST_RUN_CLOCK(s) \
-    (s)->last_run_ns = qemu_get_clock_ns(vm_clock);
+    (s)->last_run_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
 /* nifty macros from Arnon's EHCI version  */
 #define get_field(data, field) \
@@ -958,7 +958,7 @@ static void ehci_reset(void *opaque)
     }
     ehci_queues_rip_all(s, 0);
     ehci_queues_rip_all(s, 1);
-    qemu_del_timer(s->frame_timer);
+    timer_del(s->frame_timer);
     qemu_bh_cancel(s->async_bh);
 }
 
@@ -1241,11 +1241,13 @@ static int ehci_init_transfer(EHCIPacket *p)
 {
     uint32_t cpage, offset, bytes, plen;
     dma_addr_t page;
+    USBBus *bus = &p->queue->ehci->bus;
+    BusState *qbus = BUS(bus);
 
     cpage  = get_field(p->qtd.token, QTD_TOKEN_CPAGE);
     bytes  = get_field(p->qtd.token, QTD_TOKEN_TBYTES);
     offset = p->qtd.bufptr[0] & ~QTD_BUFPTR_MASK;
-    qemu_sglist_init(&p->sgl, 5, p->queue->ehci->as);
+    qemu_sglist_init(&p->sgl, qbus->parent, 5, p->queue->ehci->as);
 
     while (bytes > 0) {
         if (cpage > 4) {
@@ -1355,7 +1357,7 @@ static void ehci_execute_complete(EHCIQueue *q)
     default:
         /* should not be triggerable */
         fprintf(stderr, "USB invalid response %d\n", p->packet.status);
-        assert(0);
+        g_assert_not_reached();
         break;
     }
 
@@ -1484,7 +1486,7 @@ static int ehci_process_itd(EHCIState *ehci,
                 return -1;
             }
 
-            qemu_sglist_init(&ehci->isgl, 2, ehci->as);
+            qemu_sglist_init(&ehci->isgl, DEVICE(ehci), 2, ehci->as);
             if (off + len > 4096) {
                 /* transfer crosses page border */
                 uint32_t len2 = off + len - 4096;
@@ -2140,7 +2142,7 @@ static void ehci_advance_state(EHCIState *ehci, int async)
         default:
             fprintf(stderr, "Bad state!\n");
             again = -1;
-            assert(0);
+            g_assert_not_reached();
             break;
         }
 
@@ -2204,7 +2206,7 @@ static void ehci_advance_async_state(EHCIState *ehci)
         /* this should only be due to a developer mistake */
         fprintf(stderr, "ehci: Bad asynchronous state %d. "
                 "Resetting to active\n", ehci->astate);
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -2254,7 +2256,7 @@ static void ehci_advance_periodic_state(EHCIState *ehci)
         /* this should only be due to a developer mistake */
         fprintf(stderr, "ehci: Bad periodic state %d. "
                 "Resetting to active\n", ehci->pstate);
-        assert(0);
+        g_assert_not_reached();
     }
 }
 
@@ -2294,7 +2296,7 @@ static void ehci_frame_timer(void *opaque)
     int uframes, skipped_uframes;
     int i;
 
-    t_now = qemu_get_clock_ns(vm_clock);
+    t_now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     ns_elapsed = t_now - ehci->last_run_ns;
     uframes = ns_elapsed / UFRAME_TIMER_NS;
 
@@ -2372,7 +2374,7 @@ static void ehci_frame_timer(void *opaque)
             expire_time = t_now + (get_ticks_per_sec()
                                * (ehci->async_stepdown+1) / FRAME_TIMER_FREQ);
         }
-        qemu_mod_timer(ehci->frame_timer, expire_time);
+        timer_mod(ehci->frame_timer, expire_time);
     }
 }
 
@@ -2525,7 +2527,7 @@ void usb_ehci_realize(EHCIState *s, DeviceState *dev, Error **errp)
         s->ports[i].dev = 0;
     }
 
-    s->frame_timer = qemu_new_timer_ns(vm_clock, ehci_frame_timer, s);
+    s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, ehci_frame_timer, s);
     s->async_bh = qemu_bh_new(ehci_frame_timer, s);
 
     qemu_register_reset(ehci_reset, s);
@@ -2551,12 +2553,12 @@ void usb_ehci_init(EHCIState *s, DeviceState *dev)
     QTAILQ_INIT(&s->pqueues);
     usb_packet_init(&s->ipacket);
 
-    memory_region_init(&s->mem, "ehci", MMIO_SIZE);
-    memory_region_init_io(&s->mem_caps, &ehci_mmio_caps_ops, s,
+    memory_region_init(&s->mem, OBJECT(dev), "ehci", MMIO_SIZE);
+    memory_region_init_io(&s->mem_caps, OBJECT(dev), &ehci_mmio_caps_ops, s,
                           "capabilities", CAPA_SIZE);
-    memory_region_init_io(&s->mem_opreg, &ehci_mmio_opreg_ops, s,
+    memory_region_init_io(&s->mem_opreg, OBJECT(dev), &ehci_mmio_opreg_ops, s,
                           "operational", s->portscbase);
-    memory_region_init_io(&s->mem_ports, &ehci_mmio_port_ops, s,
+    memory_region_init_io(&s->mem_ports, OBJECT(dev), &ehci_mmio_port_ops, s,
                           "ports", 4 * s->portnr);
 
     memory_region_add_subregion(&s->mem, s->capsbase, &s->mem_caps);

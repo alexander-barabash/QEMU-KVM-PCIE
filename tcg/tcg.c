@@ -68,6 +68,24 @@ static void tcg_target_qemu_prologue(TCGContext *s);
 static void patch_reloc(uint8_t *code_ptr, int type, 
                         tcg_target_long value, tcg_target_long addend);
 
+/* The CIE and FDE header definitions will be common to all hosts.  */
+typedef struct {
+    uint32_t len __attribute__((aligned((sizeof(void *)))));
+    uint32_t id;
+    uint8_t version;
+    char augmentation[1];
+    uint8_t code_align;
+    uint8_t data_align;
+    uint8_t return_column;
+} DebugFrameCIE;
+
+typedef struct QEMU_PACKED {
+    uint32_t len __attribute__((aligned((sizeof(void *)))));
+    uint32_t cie_offset;
+    tcg_target_long func_start;
+    tcg_target_long func_len;
+} DebugFrameFDEHeader;
+
 static void tcg_register_jit_int(void *buf, size_t size,
                                  void *debug_frame, size_t debug_frame_size)
     __attribute__((unused));
@@ -103,14 +121,23 @@ static inline void tcg_out8(TCGContext *s, uint8_t v)
 
 static inline void tcg_out16(TCGContext *s, uint16_t v)
 {
-    *(uint16_t *)s->code_ptr = v;
-    s->code_ptr += 2;
+    uint8_t *p = s->code_ptr;
+    *(uint16_t *)p = v;
+    s->code_ptr = p + 2;
 }
 
 static inline void tcg_out32(TCGContext *s, uint32_t v)
 {
-    *(uint32_t *)s->code_ptr = v;
-    s->code_ptr += 4;
+    uint8_t *p = s->code_ptr;
+    *(uint32_t *)p = v;
+    s->code_ptr = p + 4;
+}
+
+static inline void tcg_out64(TCGContext *s, uint64_t v)
+{
+    uint8_t *p = s->code_ptr;
+    *(uint64_t *)p = v;
+    s->code_ptr = p + 8;
 }
 
 /* label relocation processing */
@@ -1160,9 +1187,7 @@ void tcg_add_target_add_op_defs(const TCGTargetOpDef *tdefs)
     i = 0;
     for (op = 0; op < ARRAY_SIZE(tcg_op_defs); op++) {
         const TCGOpDef *def = &tcg_op_defs[op];
-        if (op < INDEX_op_call
-            || op == INDEX_op_debug_insn_start
-            || (def->flags & TCG_OPF_NOT_PRESENT)) {
+        if (def->flags & TCG_OPF_NOT_PRESENT) {
             /* Wrong entry in op definitions? */
             if (def->used) {
                 fprintf(stderr, "Invalid op definition for %s\n", def->name);
@@ -2659,9 +2684,9 @@ static void tcg_register_jit_int(void *buf_ptr, size_t buf_size,
     img->sym[1].st_size = buf_size;
 
     img->di.cu_low_pc = buf;
-    img->di.cu_high_pc = buf_size;
+    img->di.cu_high_pc = buf + buf_size;
     img->di.fn_low_pc = buf;
-    img->di.fn_high_pc = buf_size;
+    img->di.fn_high_pc = buf + buf_size;
 
 #ifdef DEBUG_JIT
     /* Enable this block to be able to debug the ELF image file creation.

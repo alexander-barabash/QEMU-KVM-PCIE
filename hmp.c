@@ -164,6 +164,10 @@ void hmp_info_migrate(Monitor *mon, const QDict *qdict)
             monitor_printf(mon, "downtime: %" PRIu64 " milliseconds\n",
                            info->downtime);
         }
+        if (info->has_setup_time) {
+            monitor_printf(mon, "setup: %" PRIu64 " milliseconds\n",
+                           info->setup_time);
+        }
     }
 
     if (info->has_ram) {
@@ -907,6 +911,34 @@ void hmp_drive_mirror(Monitor *mon, const QDict *qdict)
     hmp_handle_error(mon, &errp);
 }
 
+void hmp_drive_backup(Monitor *mon, const QDict *qdict)
+{
+    const char *device = qdict_get_str(qdict, "device");
+    const char *filename = qdict_get_str(qdict, "target");
+    const char *format = qdict_get_try_str(qdict, "format");
+    int reuse = qdict_get_try_bool(qdict, "reuse", 0);
+    int full = qdict_get_try_bool(qdict, "full", 0);
+    enum NewImageMode mode;
+    Error *errp = NULL;
+
+    if (!filename) {
+        error_set(&errp, QERR_MISSING_PARAMETER, "target");
+        hmp_handle_error(mon, &errp);
+        return;
+    }
+
+    if (reuse) {
+        mode = NEW_IMAGE_MODE_EXISTING;
+    } else {
+        mode = NEW_IMAGE_MODE_ABSOLUTE_PATHS;
+    }
+
+    qmp_drive_backup(device, filename, !!format, format,
+                     full ? MIRROR_SYNC_MODE_FULL : MIRROR_SYNC_MODE_TOP,
+                     true, mode, false, 0, false, 0, false, 0, &errp);
+    hmp_handle_error(mon, &errp);
+}
+
 void hmp_snapshot_blkdev(Monitor *mon, const QDict *qdict)
 {
     const char *device = qdict_get_str(qdict, "device");
@@ -1163,13 +1195,13 @@ static void hmp_migrate_status_cb(void *opaque)
             monitor_flush(status->mon);
         }
 
-        qemu_mod_timer(status->timer, qemu_get_clock_ms(rt_clock) + 1000);
+        timer_mod(status->timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
     } else {
         if (status->is_block_migration) {
             monitor_printf(status->mon, "\n");
         }
         monitor_resume(status->mon);
-        qemu_del_timer(status->timer);
+        timer_del(status->timer);
         g_free(status);
     }
 
@@ -1203,9 +1235,9 @@ void hmp_migrate(Monitor *mon, const QDict *qdict)
         status = g_malloc0(sizeof(*status));
         status->mon = mon;
         status->is_block_migration = blk || inc;
-        status->timer = qemu_new_timer_ms(rt_clock, hmp_migrate_status_cb,
+        status->timer = timer_new_ms(QEMU_CLOCK_REALTIME, hmp_migrate_status_cb,
                                           status);
-        qemu_mod_timer(status->timer, qemu_get_clock_ms(rt_clock));
+        timer_mod(status->timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME));
     }
 }
 

@@ -196,7 +196,7 @@ NICInfo nd_table[MAX_NICS];
 int autostart;
 static int rtc_utc = 1;
 static int rtc_date_offset = -1; /* -1 means no change */
-QEMUClock *rtc_clock;
+QEMUClockType rtc_clock;
 int vga_interface_type = VGA_NONE;
 static int full_screen = 0;
 static int no_frame = 0;
@@ -409,7 +409,7 @@ static QemuOptsList qemu_machine_opts = {
             .help = "Dump current dtb to a file and quit",
         }, {
             .name = "phandle_start",
-            .type = QEMU_OPT_STRING,
+            .type = QEMU_OPT_NUMBER,
             .help = "The first phandle ID we may generate dynamically",
         }, {
             .name = "dt_compatible",
@@ -515,6 +515,37 @@ static QemuOptsList qemu_realtime_opts = {
         { /* end of list */ }
     },
 };
+
+static QemuOptsList qemu_msg_opts = {
+    .name = "msg",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_msg_opts.head),
+    .desc = {
+        {
+            .name = "timestamp",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end of list */ }
+    },
+};
+
+/**
+ * Get machine options
+ *
+ * Returns: machine options (never null).
+ */
+QemuOpts *qemu_get_machine_opts(void)
+{
+    QemuOptsList *list;
+    QemuOpts *opts;
+
+    list = qemu_find_opts("machine");
+    assert(list);
+    opts = qemu_opts_find(list, NULL);
+    if (!opts) {
+        opts = qemu_opts_create_nofail(list);
+    }
+    return opts;
+}
 
 const char *qemu_get_vm_name(void)
 {
@@ -774,11 +805,11 @@ static void configure_rtc(QemuOpts *opts)
     value = qemu_opt_get(opts, "clock");
     if (value) {
         if (!strcmp(value, "host")) {
-            rtc_clock = host_clock;
+            rtc_clock = QEMU_CLOCK_HOST;
         } else if (!strcmp(value, "rt")) {
-            rtc_clock = rt_clock;
+            rtc_clock = QEMU_CLOCK_REALTIME;
         } else if (!strcmp(value, "vm")) {
-            rtc_clock = vm_clock;
+            rtc_clock = QEMU_CLOCK_VIRTUAL;
         } else {
             fprintf(stderr, "qemu: invalid option value '%s'\n", value);
             exit(1);
@@ -1017,15 +1048,9 @@ static int parse_sandbox(QemuOpts *opts, void *opaque)
     return 0;
 }
 
-/*********QEMU USB setting******/
 bool usb_enabled(bool default_usb)
 {
-    QemuOpts *mach_opts;
-    mach_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
-    if (mach_opts) {
-        return qemu_opt_get_bool(mach_opts, "usb", default_usb);
-    }
-    return default_usb;
+    return qemu_opt_get_bool(qemu_get_machine_opts(), "usb", default_usb);
 }
 
 #ifndef _WIN32
@@ -1488,6 +1513,12 @@ static void configure_realtime(QemuOpts *opts)
             exit(1);
         }
     }
+}
+
+
+static void configure_msg(QemuOpts *opts)
+{
+    enable_timestamp_msg = qemu_opt_get_bool(opts, "timestamp", true);
 }
 
 /***********************************************************/
@@ -2362,7 +2393,7 @@ static int chardev_init_func(QemuOpts *opts, void *opaque)
 
     qemu_chr_new_from_opts(opts, NULL, &local_err);
     if (error_is_set(&local_err)) {
-        fprintf(stderr, "%s\n", error_get_pretty(local_err));
+        error_report("%s", error_get_pretty(local_err));
         error_free(local_err);
         return -1;
     }
@@ -2672,17 +2703,13 @@ static struct {
 
 static int configure_accelerator(void)
 {
-    const char *p = NULL;
+    const char *p;
     char buf[10];
     int i, ret;
     bool accel_initialised = false;
     bool init_failed = false;
 
-    QemuOptsList *list = qemu_find_opts("machine");
-    if (!QTAILQ_EMPTY(&list->head)) {
-        p = qemu_opt_get(QTAILQ_FIRST(&list->head), "accel");
-    }
-
+    p = qemu_opt_get(qemu_get_machine_opts(), "accel");
     if (p == NULL) {
         /* Use the default "accelerator", tcg */
         p = "tcg";
@@ -2933,11 +2960,12 @@ int main(int argc, char **argv, char **envp)
     qemu_add_opts(&qemu_object_opts);
     qemu_add_opts(&qemu_tpmdev_opts);
     qemu_add_opts(&qemu_realtime_opts);
+    qemu_add_opts(&qemu_msg_opts);
 
     runstate_init();
 
     init_clocks();
-    rtc_clock = host_clock;
+    rtc_clock = QEMU_CLOCK_HOST;
 
     qemu_cache_utils_init(envp);
 
@@ -3686,7 +3714,9 @@ int main(int argc, char **argv, char **envp)
                 old_param = 1;
                 break;
             case QEMU_OPTION_clock:
-                configure_alarms(optarg);
+                /* Clock options no longer exist.  Keep this option for
+                 * backward compatibility.
+                 */
                 break;
             case QEMU_OPTION_startdate:
                 configure_rtc_date_offset(optarg, 1);
@@ -3828,6 +3858,13 @@ int main(int argc, char **argv, char **envp)
                     exit(1);
                 }
                 configure_realtime(opts);
+                break;
+            case QEMU_OPTION_msg:
+                opts = qemu_opts_parse(qemu_find_opts("msg"), optarg, 0);
+                if (!opts) {
+                    exit(1);
+                }
+                configure_msg(opts);
                 break;
             default:
                 os_parse_cmd_args(popt->index, optarg);
@@ -4080,14 +4117,10 @@ int main(int argc, char **argv, char **envp)
         qtest_init();
     }
 
-    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
-    if (machine_opts) {
-        kernel_filename = qemu_opt_get(machine_opts, "kernel");
-        initrd_filename = qemu_opt_get(machine_opts, "initrd");
-        kernel_cmdline = qemu_opt_get(machine_opts, "append");
-    } else {
-        kernel_filename = initrd_filename = kernel_cmdline = NULL;
-    }
+    machine_opts = qemu_get_machine_opts();
+    kernel_filename = qemu_opt_get(machine_opts, "kernel");
+    initrd_filename = qemu_opt_get(machine_opts, "initrd");
+    kernel_cmdline = qemu_opt_get(machine_opts, "append");
 
     if (!boot_order) {
         boot_order = machine->boot_order;
@@ -4130,7 +4163,7 @@ int main(int argc, char **argv, char **envp)
         exit(1);
     }
 
-    if (!linux_boot && machine_opts && qemu_opt_get(machine_opts, "dtb")) {
+    if (!linux_boot && qemu_opt_get(machine_opts, "dtb")) {
         fprintf(stderr, "-dtb only allowed with -kernel option\n");
         exit(1);
     }
@@ -4344,8 +4377,8 @@ int main(int argc, char **argv, char **envp)
         vnc_display_init(ds);
         vnc_display_open(ds, vnc_display, &local_err);
         if (local_err != NULL) {
-            fprintf(stderr, "Failed to start VNC server on `%s': %s\n",
-                    vnc_display, error_get_pretty(local_err));
+            error_report("Failed to start VNC server on `%s': %s",
+                         vnc_display, error_get_pretty(local_err));
             error_free(local_err);
             exit(1);
         }
@@ -4356,7 +4389,7 @@ int main(int argc, char **argv, char **envp)
     }
 #endif
 #ifdef CONFIG_SPICE
-    if (using_spice && !qxl_enabled) {
+    if (using_spice && !spice_displays) {
         qemu_spice_display_init(ds);
     }
 #endif
@@ -4388,7 +4421,8 @@ int main(int argc, char **argv, char **envp)
         Error *local_err = NULL;
         qemu_start_incoming_migration(incoming, &local_err);
         if (local_err) {
-            fprintf(stderr, "-incoming %s: %s\n", incoming, error_get_pretty(local_err));
+            error_report("-incoming %s: %s", incoming,
+                         error_get_pretty(local_err));
             error_free(local_err);
             exit(1);
         }

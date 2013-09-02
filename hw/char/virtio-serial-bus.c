@@ -603,7 +603,7 @@ static void virtio_serial_post_load_timer_cb(void *opaque)
         }
     }
     g_free(s->post_load->connected);
-    qemu_free_timer(s->post_load->timer);
+    timer_free(s->post_load->timer);
     g_free(s->post_load);
     s->post_load = NULL;
 }
@@ -618,7 +618,7 @@ static int fetch_active_ports_list(QEMUFile *f, int version_id,
     s->post_load->connected =
         g_malloc0(sizeof(*s->post_load->connected) * nr_active_ports);
 
-    s->post_load->timer = qemu_new_timer_ns(vm_clock,
+    s->post_load->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                             virtio_serial_post_load_timer_cb,
                                             s);
 
@@ -660,7 +660,7 @@ static int fetch_active_ports_list(QEMUFile *f, int version_id,
             }
         }
     }
-    qemu_mod_timer(s->post_load->timer, 1);
+    timer_mod(s->post_load->timer, 1);
     return 0;
 }
 
@@ -971,6 +971,7 @@ static void virtio_serial_port_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *k = DEVICE_CLASS(klass);
     k->init = virtser_port_qdev_init;
+    set_bit(DEVICE_CATEGORY_INPUT, k->categories);
     k->bus_type = TYPE_VIRTIO_SERIAL_BUS;
     k->exit = virtser_port_qdev_exit;
     k->unplug = qdev_simple_unplug_cb;
@@ -998,8 +999,8 @@ static int virtio_serial_device_exit(DeviceState *dev)
     g_free(vser->ports_map);
     if (vser->post_load) {
         g_free(vser->post_load->connected);
-        qemu_del_timer(vser->post_load->timer);
-        qemu_free_timer(vser->post_load->timer);
+        timer_del(vser->post_load->timer);
+        timer_free(vser->post_load->timer);
         g_free(vser->post_load);
     }
     virtio_cleanup(vdev);
@@ -1017,6 +1018,7 @@ static void virtio_serial_class_init(ObjectClass *klass, void *data)
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
     dc->exit = virtio_serial_device_exit;
     dc->props = virtio_serial_properties;
+    set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
     vdc->init = virtio_serial_device_init;
     vdc->get_features = get_features;
     vdc->get_config = get_config;

@@ -526,7 +526,7 @@ static void intel_hda_get_wall_clk(IntelHDAState *d, const IntelHDAReg *reg)
 {
     int64_t ns;
 
-    ns = qemu_get_clock_ns(vm_clock) - d->wall_base_ns;
+    ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - d->wall_base_ns;
     d->wall_clk = (uint32_t)(ns * 24 / 1000);  /* 24 MHz */
 }
 
@@ -1111,7 +1111,7 @@ static void intel_hda_reset(DeviceState *dev)
     HDACodecDevice *cdev;
 
     intel_hda_regs_reset(d);
-    d->wall_base_ns = qemu_get_clock_ns(vm_clock);
+    d->wall_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
     /* reset codecs */
     QTAILQ_FOREACH(kid, &d->codecs.qbus.children, sibling) {
@@ -1135,7 +1135,7 @@ static int intel_hda_init(PCIDevice *pci)
     /* HDCTL off 0x40 bit 0 selects signaling mode (1-HDA, 0 - Ac97) 18.1.19 */
     conf[0x40] = 0x01;
 
-    memory_region_init_io(&d->mmio, &intel_hda_mmio_ops, d,
+    memory_region_init_io(&d->mmio, OBJECT(d), &intel_hda_mmio_ops, d,
                           "intel-hda", 0x4000);
     pci_register_bar(&d->pci, 0, 0, &d->mmio);
     if (d->msi) {
@@ -1258,6 +1258,7 @@ static void intel_hda_class_init_ich6(ObjectClass *klass, void *data)
 
     k->device_id = 0x2668;
     k->revision = 1;
+    set_bit(DEVICE_CATEGORY_SOUND, dc->categories);
     dc->desc = "Intel HD Audio Controller (ich6)";
 }
 
@@ -1268,6 +1269,7 @@ static void intel_hda_class_init_ich9(ObjectClass *klass, void *data)
 
     k->device_id = 0x293e;
     k->revision = 3;
+    set_bit(DEVICE_CATEGORY_SOUND, dc->categories);
     dc->desc = "Intel HD Audio Controller (ich9)";
 }
 
@@ -1296,6 +1298,7 @@ static void hda_codec_device_class_init(ObjectClass *klass, void *data)
     DeviceClass *k = DEVICE_CLASS(klass);
     k->init = hda_codec_dev_init;
     k->exit = hda_codec_dev_exit;
+    set_bit(DEVICE_CATEGORY_SOUND, k->categories);
     k->bus_type = TYPE_HDA_BUS;
     k->props = hda_props;
 }

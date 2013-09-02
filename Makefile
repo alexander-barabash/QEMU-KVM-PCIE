@@ -167,11 +167,10 @@ recurse-all: $(SUBDIR_RULES) $(ROMSUBDIR_RULES)
 
 bt-host.o: QEMU_CFLAGS += $(BLUEZ_CFLAGS)
 
-version.o: $(SRC_PATH)/version.rc config-host.h | version.lo
-version.lo: $(SRC_PATH)/version.rc config-host.h
-
-version-obj-$(CONFIG_WIN32) += version.o
-version-lobj-$(CONFIG_WIN32) += version.lo
+$(BUILD_DIR)/version.o: $(SRC_PATH)/version.rc $(BUILD_DIR)/config-host.h | $(BUILD_DIR)/version.lo
+	$(call quiet-command,$(WINDRES) -I$(BUILD_DIR) -o $@ $<,"  RC    version.o")
+$(BUILD_DIR)/version.lo: $(SRC_PATH)/version.rc $(BUILD_DIR)/config-host.h
+	$(call quiet-command,$(WINDRES) -I$(BUILD_DIR) -o $@ $<,"  RC    version.lo")
 
 Makefile: $(version-obj-y) $(version-lobj-y)
 
@@ -436,6 +435,61 @@ pdf: qemu-doc.pdf qemu-tech.pdf
 qemu-doc.dvi qemu-doc.html qemu-doc.info qemu-doc.pdf: \
 	qemu-img.texi qemu-nbd.texi qemu-options.texi \
 	qemu-monitor.texi qemu-img-cmds.texi
+
+ifdef CONFIG_WIN32
+
+INSTALLER = qemu-setup-$(VERSION)$(EXESUF)
+
+nsisflags = -V2 -NOCD
+
+ifneq ($(wildcard $(SRC_PATH)/dll),)
+ifeq ($(ARCH),x86_64)
+# 64 bit executables
+DLL_PATH = $(SRC_PATH)/dll/w64
+nsisflags += -DW64
+else
+# 32 bit executables
+DLL_PATH = $(SRC_PATH)/dll/w32
+endif
+endif
+
+.PHONY: installer
+installer: $(INSTALLER)
+
+INSTDIR=/tmp/qemu-nsis
+
+$(INSTALLER): $(SRC_PATH)/qemu.nsi
+	make install prefix=${INSTDIR}
+ifdef SIGNCODE
+	(cd ${INSTDIR}; \
+         for i in *.exe; do \
+           $(SIGNCODE) $${i}; \
+         done \
+        )
+endif # SIGNCODE
+	(cd ${INSTDIR}; \
+         for i in qemu-system-*.exe; do \
+           arch=$${i%.exe}; \
+           arch=$${arch#qemu-system-}; \
+           echo Section \"$$arch\" Section_$$arch; \
+           echo SetOutPath \"\$$INSTDIR\"; \
+           echo File \"\$${BINDIR}\\$$i\"; \
+           echo SectionEnd; \
+         done \
+        ) >${INSTDIR}/system-emulations.nsh
+	makensis $(nsisflags) \
+                $(if $(BUILD_DOCS),-DCONFIG_DOCUMENTATION="y") \
+                $(if $(CONFIG_GTK),-DCONFIG_GTK="y") \
+                -DBINDIR="${INSTDIR}" \
+                $(if $(DLL_PATH),-DDLLDIR="$(DLL_PATH)") \
+                -DSRCDIR="$(SRC_PATH)" \
+                -DOUTFILE="$(INSTALLER)" \
+                $(SRC_PATH)/qemu.nsi
+	rm -r ${INSTDIR}
+ifdef SIGNCODE
+	$(SIGNCODE) $(INSTALLER)
+endif # SIGNCODE
+endif # CONFIG_WIN
 
 # Add a dependency on the generated files, so that they are always
 # rebuilt before other object files

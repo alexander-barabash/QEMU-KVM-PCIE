@@ -54,6 +54,7 @@
 
 #include "hw/sysbus.h"
 #include "qemu/timer.h"
+#include "qemu/main-loop.h"
 #include "qemu-common.h"
 #include "hw/ptimer.h"
 
@@ -240,8 +241,13 @@ typedef struct {
 
 } Exynos4210MCTLT;
 
+#define TYPE_EXYNOS4210_MCT "exynos4210.mct"
+#define EXYNOS4210_MCT(obj) \
+    OBJECT_CHECK(Exynos4210MCTState, (obj), TYPE_EXYNOS4210_MCT)
+
 typedef struct Exynos4210MCTState {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion iomem;
 
     /* Registers */
@@ -900,7 +906,7 @@ static void exynos4210_ltick_event(void *opaque)
         /* raise interrupt if enabled */
         if (s->reg.int_enb & L_INT_INTENB_ICNTEIE) {
 #ifdef DEBUG_MCT
-            time2[s->id] = qemu_get_clock_ns(vm_clock);
+            time2[s->id] = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
             DPRINTF("local timer[%d] IRQ: %llx\n", s->id,
                     time2[s->id] - time1[s->id]);
             time1[s->id] = time2[s->id];
@@ -955,7 +961,7 @@ static void exynos4210_mct_update_freq(Exynos4210MCTState *s)
 /* set defaul_timer values for all fields */
 static void exynos4210_mct_reset(DeviceState *d)
 {
-    Exynos4210MCTState *s = (Exynos4210MCTState *)d;
+    Exynos4210MCTState *s = EXYNOS4210_MCT(d);
     uint32_t i;
 
     s->reg_mct_cfg = 0;
@@ -1424,7 +1430,7 @@ static const MemoryRegionOps exynos4210_mct_ops = {
 static int exynos4210_mct_init(SysBusDevice *dev)
 {
     int i;
-    Exynos4210MCTState *s = FROM_SYSBUS(Exynos4210MCTState, dev);
+    Exynos4210MCTState *s = EXYNOS4210_MCT(dev);
     QEMUBH *bh[2];
 
     /* Global timer */
@@ -1449,8 +1455,8 @@ static int exynos4210_mct_init(SysBusDevice *dev)
         sysbus_init_irq(dev, &s->l_timer[i].irq);
     }
 
-    memory_region_init_io(&s->iomem, &exynos4210_mct_ops, s, "exynos4210-mct",
-            MCT_SFR_SIZE);
+    memory_region_init_io(&s->iomem, OBJECT(s), &exynos4210_mct_ops, s,
+                          "exynos4210-mct", MCT_SFR_SIZE);
     sysbus_init_mmio(dev, &s->iomem);
 
     return 0;
@@ -1467,7 +1473,7 @@ static void exynos4210_mct_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo exynos4210_mct_info = {
-    .name          = "exynos4210.mct",
+    .name          = TYPE_EXYNOS4210_MCT,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Exynos4210MCTState),
     .class_init    = exynos4210_mct_class_init,

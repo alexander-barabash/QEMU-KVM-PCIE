@@ -35,8 +35,8 @@ void vm_state_notify(int running, RunState state);
 #define VMRESET_REPORT   true
 
 void vm_start(void);
-void vm_stop(RunState state);
-void vm_stop_force_state(RunState state);
+int vm_stop(RunState state);
+int vm_stop_force_state(RunState state);
 
 typedef enum WakeupReason {
     QEMU_WAKEUP_REASON_OTHER = 0,
@@ -103,7 +103,6 @@ typedef enum {
 
 extern int vga_interface_type;
 #define xenfb_enabled (vga_interface_type == VGA_XENFB)
-#define qxl_enabled (vga_interface_type == VGA_QXL)
 
 extern int graphic_width;
 extern int graphic_height;
@@ -125,7 +124,7 @@ extern int boot_menu;
 extern uint8_t *boot_splash_filedata;
 extern size_t boot_splash_filedata_size;
 extern uint8_t qemu_extra_params_fw[2];
-extern QEMUClock *rtc_clock;
+extern QEMUClockType rtc_clock;
 
 #define MAX_NODES 64
 #define MAX_CPUMASK_BITS 255
@@ -184,6 +183,8 @@ void add_boot_device_path(int32_t bootindex, DeviceState *dev,
 char *get_boot_devices_list(size_t *size);
 
 DeviceState *get_boot_device(uint32_t position);
+
+QemuOpts *qemu_get_machine_opts(void);
 
 bool usb_enabled(bool default_usb);
 

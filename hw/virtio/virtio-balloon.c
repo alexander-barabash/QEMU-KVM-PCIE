@@ -53,8 +53,8 @@ static const char *balloon_stat_names[] = {
 /*
  * reset_stats - Mark all items in the stats array as unset
  *
- * This function needs to be called at device intialization and before
- * before updating to a set of newly-generated stats.  This will ensure that no
+ * This function needs to be called at device initialization and before
+ * updating to a set of newly-generated stats.  This will ensure that no
  * stale values stick around in case the guest reports a subset of the supported
  * statistics.
  */
@@ -78,8 +78,8 @@ static bool balloon_stats_enabled(const VirtIOBalloon *s)
 static void balloon_stats_destroy_timer(VirtIOBalloon *s)
 {
     if (balloon_stats_enabled(s)) {
-        qemu_del_timer(s->stats_timer);
-        qemu_free_timer(s->stats_timer);
+        timer_del(s->stats_timer);
+        timer_free(s->stats_timer);
         s->stats_timer = NULL;
         s->stats_poll_interval = 0;
     }
@@ -87,7 +87,7 @@ static void balloon_stats_destroy_timer(VirtIOBalloon *s)
 
 static void balloon_stats_change_timer(VirtIOBalloon *s, int secs)
 {
-    qemu_mod_timer(s->stats_timer, qemu_get_clock_ms(vm_clock) + secs * 1000);
+    timer_mod(s->stats_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + secs * 1000);
 }
 
 static void balloon_stats_poll_cb(void *opaque)
@@ -173,7 +173,7 @@ static void balloon_stats_set_poll_interval(Object *obj, struct Visitor *v,
 
     /* create a new timer */
     g_assert(s->stats_timer == NULL);
-    s->stats_timer = qemu_new_timer_ms(vm_clock, balloon_stats_poll_cb, s);
+    s->stats_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, balloon_stats_poll_cb, s);
     s->stats_poll_interval = value;
     balloon_stats_change_timer(s, 0);
 }
@@ -205,6 +205,7 @@ static void virtio_balloon_handle_output(VirtIODevice *vdev, VirtQueue *vq)
             addr = section.offset_within_region;
             balloon_page(memory_region_get_ram_ptr(section.mr) + addr,
                          !!(vq == s->dvq));
+            memory_region_unref(section.mr);
         }
 
         virtqueue_push(vq, &elem, offset);
@@ -391,6 +392,7 @@ static void virtio_balloon_class_init(ObjectClass *klass, void *data)
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
     dc->exit = virtio_balloon_device_exit;
     dc->props = virtio_balloon_properties;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     vdc->init = virtio_balloon_device_init;
     vdc->get_config = virtio_balloon_get_config;
     vdc->set_config = virtio_balloon_set_config;
