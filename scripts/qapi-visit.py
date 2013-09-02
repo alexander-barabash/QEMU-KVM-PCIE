@@ -20,7 +20,10 @@ import errno
 def generate_visit_struct_fields(name, field_prefix, fn_prefix, members):
     substructs = []
     ret = ''
-    full_name = name if not fn_prefix else "%s_%s" % (name, fn_prefix)
+    if not fn_prefix:
+        full_name = name
+    else:
+        full_name = "%s_%s" % (name, fn_prefix)
 
     for argname, argentry, optional, structured in parse_args(members):
         if structured:
@@ -84,7 +87,10 @@ if (!error_is_set(errp)) {
 ''')
     push_indent()
 
-    full_name = name if not field_prefix else "%s_%s" % (field_prefix, name)
+    if not field_prefix:
+        full_name = name
+    else:
+        full_name = "%s_%s" % (field_prefix, name)
 
     if len(field_prefix):
         ret += mcgen('''
