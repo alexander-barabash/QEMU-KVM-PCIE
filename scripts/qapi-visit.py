@@ -271,12 +271,16 @@ void visit_type_%(name)s(Visitor *m, %(name)s ** obj, const char *name, Error **
             name=name)
 
     pop_indent()
+    if not discriminator:
+        discriminator_or_type = "type"
+    else:
+        discriminator_or_type = discriminator
     ret += mcgen('''
         visit_type_%(name)sKind(m, &(*obj)->kind, "%(type)s", &err);
         if (!err) {
             switch ((*obj)->kind) {
 ''',
-                 name=name, type="type" if not discriminator else discriminator)
+                 name=name, type=discriminator_or_type)
 
     for key in members:
         if not discriminator:
