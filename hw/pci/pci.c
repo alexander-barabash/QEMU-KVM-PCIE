@@ -874,7 +874,8 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     dma_io_as = &address_space_io;
 
     memory_region_init_alias(&pci_dev->bus_master_io_enable_region,
-                             "bus master IO", dma_io_as->root, 0,
+                             OBJECT(pci_dev), "bus master IO",
+                             dma_io_as->root, 0,
                              memory_region_size(dma_io_as->root));
     memory_region_set_enabled(&pci_dev->bus_master_io_enable_region, false);
     address_space_init(&pci_dev->bus_master_io_as,

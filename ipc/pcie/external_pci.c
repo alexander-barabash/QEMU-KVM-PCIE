@@ -773,6 +773,7 @@ static int pci_external_init(PCIDevice *pci_dev)
         if (bar_is_ram_or_rom(bar_info) &&
             !is_wrong_endian(bar_endianness(bar_info))) {
             memory_region_init_ram_ptr(&bar_info->region,
+                                       OBJECT(pci_dev),
                                        bar_info->name, io_region->size,
                                        bar_info->file_data.pointer);
         } else {
@@ -809,7 +810,7 @@ static int pci_external_init(PCIDevice *pci_dev)
                 ops->write = external_pci_write_mmio;
             }
 
-            memory_region_init_io(&bar_info->region, ops,
+            memory_region_init_io(&bar_info->region, OBJECT(pci_dev), ops,
                                   opaque, bar_info->name, io_region->size);
         }
 
