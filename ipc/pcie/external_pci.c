@@ -263,11 +263,16 @@ pci_external_uninit(PCIDevice *dev)
 static uint32_t
 external_pci_config_read(PCIDevice *dev, uint32_t address, int len)
 {
+    uint32_t val;
+    uint32_t le32_val;
     ExternalPCIState *d = DO_UPCAST(ExternalPCIState, dev, dev);
     DBGOUT(GENERAL, "external_pci_config_read addr=0x%X len=%d",
            address, len);
-    return read_downstream_pcie_config(d->ipc_connection,
-                                       dev, address, len);
+    val = read_downstream_pcie_config(d->ipc_connection,
+                                      dev, address, len);
+    le32_val = cpu_to_le32(val);
+    memcpy(dev->config + address, &le32_val, len);
+    return val;
 }
 
 static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
