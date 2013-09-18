@@ -30,10 +30,10 @@
 #define EXTERNAL_PCI_DEBUG
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
-    DEBUG_GENERAL, DEBUG_REQUESTS,
+    DEBUG_GENERAL, DEBUG_REQUESTS, DEBUG_INIT,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL);
+static int debugflags = DBGBIT(GENERAL) | DBGBIT(INIT);
 
 #define	DBGOUT(what, fmt, ...) do { \
     if (debugflags & DBGBIT(what)) \
@@ -89,6 +89,8 @@ static void init_threads(void)
         return;
     }
     already_called = true;
+    DBGOUT(INIT, "init_threads glib_major_version=%d glib_minor_version=%d",
+           glib_major_version, glib_minor_version);
     if (glib_major_version != 2) {
         return;
     }
@@ -96,8 +98,11 @@ static void init_threads(void)
         return;
     }
     if (glib_minor_version < 24) {
-        return;
+        if (g_thread_supported()) {
+            return;
+        }
     }
+    DBGOUT(INIT, "init_threads calling g_thread_init");
     g_thread_init(NULL);
 }
 
