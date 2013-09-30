@@ -95,7 +95,7 @@ bool setup_ipc_channel(IPCChannel *channel,
                        (struct sockaddr *)(&addr),
                        addr_size) != 0) {
             if (errno != EINTR) {
-                fprintf(stderr, "Failed to connect IPC socket %s.\n", socket_path);
+                fprintf(stderr, "Failed to connect IPC socket %s (error: %s).\n", socket_path, strerror(errno));
                 return false;
             }
         }
