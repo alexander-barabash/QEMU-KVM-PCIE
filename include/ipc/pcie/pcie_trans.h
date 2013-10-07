@@ -928,39 +928,64 @@ void pcie_trans_encode_io_request(uint8_t trans_data[16],
 }
 
 static inline
-void pcie_trans_encode_msg_request(uint8_t trans_data[16],
-                                   uint8_t message_routing_type,
-                                   uint8_t message_code,
-                                   bool with_data,
-                                   uint16_t requester_id,
-                                   uint8_t tag,
-                                   uint8_t bus_num,
-                                   uint8_t dev_num,
-                                   uint8_t func_num,
-                                   uint32_t size,
-                                   unsigned *leading_disabled_bytes,
-                                   unsigned *trailing_disabled_bytes)
+void pcie_trans_encode_msg_request_base(uint8_t trans_data[16],
+                                        uint8_t message_routing_type,
+                                        uint8_t message_code,
+                                        bool with_data,
+                                        uint16_t requester_id,
+                                        uint8_t tag,
+                                        uint32_t size)
 {
-    bool bebits_first_dw[4];
-    bool bebits_last_dw[4];
-
-    pcie_trans_compute_bebits_for_1_word_trans(0,
-                                               size,
-                                               leading_disabled_bytes,
-                                               trailing_disabled_bytes,
-                                               bebits_first_dw,
-                                               bebits_last_dw);
     pcie_trans_clear(trans_data);
     pcie_trans_set_message_routing_type(trans_data, message_routing_type);
     pcie_trans_set_message_code(trans_data, message_code);
     pcie_trans_set_payload_mark(trans_data, with_data);
     pcie_trans_set_request_requester_id(trans_data, requester_id);
     pcie_trans_set_request_tag(trans_data, tag);
+    pcie_trans_set_data_size_in_dw(trans_data, (size + 3) / 4);
+}
 
+static inline
+void pcie_trans_encode_msg_routed_by_id(uint8_t trans_data[16],
+                                        uint8_t message_routing_type,
+                                        uint8_t message_code,
+                                        bool with_data,
+                                        uint16_t requester_id,
+                                        uint8_t tag,
+                                        uint8_t bus_num,
+                                        uint8_t dev_num,
+                                        uint8_t func_num,
+                                        uint32_t size)
+{
+    pcie_trans_encode_msg_request_base(trans_data,
+                                       ROUTED_BY_ID,
+                                       message_code,
+                                       with_data,
+                                       requester_id,
+                                       tag,
+                                       size);
     pcie_trans_set_routing_target_device(trans_data,
                                          bus_num, dev_num, func_num);
-    pcie_trans_set_data_size_in_dw(trans_data, (size + 3) / 4);
-    pcie_trans_set_byte_enable_bits(trans_data, bebits_first_dw, bebits_last_dw);
+}
+
+static inline
+void pcie_trans_encode_msg_routed_by_address(uint8_t trans_data[16],
+                                             uint8_t message_routing_type,
+                                             uint8_t message_code,
+                                             bool with_data,
+                                             uint16_t requester_id,
+                                             uint8_t tag,
+                                             uint64_t addr,
+                                             uint32_t size)
+{
+    pcie_trans_encode_msg_request_base(trans_data,
+                                       ROUTED_BY_ADDRESS,
+                                       message_code,
+                                       with_data,
+                                       requester_id,
+                                       tag,
+                                       size);
+    pcie_trans_set_addr(trans_data, addr);
 }
 
 static inline
