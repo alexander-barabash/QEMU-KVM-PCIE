@@ -32,7 +32,7 @@ static int debugflags = DBGBIT(GENERAL);
 
 #define	DBGOUT(what, fmt, ...) do { \
     if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+        fprintf(stderr, "requesters_table: " fmt "\n", ## __VA_ARGS__); \
     } while (0)
 #else
 #define	DBGOUT(what, fmt, ...) do {} while (0)

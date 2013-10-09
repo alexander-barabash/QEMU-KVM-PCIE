@@ -37,7 +37,7 @@ static int debugflags = DBGBIT(GENERAL);
 
 #define	DBGOUT(what, fmt, ...) do { \
     if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+        fprintf(stderr, "ipc_connection: " fmt "\n", ## __VA_ARGS__); \
     } while (0)
 #else
 #define	DBGOUT(what, fmt, ...) do {} while (0)
@@ -54,6 +54,7 @@ static gpointer ipc_input_thread(gpointer opaque)
         IPCPacket *packet;
         unsigned packet_size;
 
+        DBGOUT(REQUESTS, "read_ipc_channel_data %d bytes\n", header_size);
         if (!read_ipc_channel_data(&connection->channel, header, header_size)) {
             DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
@@ -65,6 +66,8 @@ static gpointer ipc_input_thread(gpointer opaque)
         packet_size = sizer->get_packet_size(header);
         packet = g_malloc0(sizeof(IPCPacket) + packet_size);
         memcpy(ipc_packet_data(packet), header, header_size);
+        DBGOUT(REQUESTS, "read_ipc_channel_data for attached data %d bytes\n",
+               packet_size - header_size);
         if (!read_ipc_channel_data(&connection->channel,
                                    ipc_packet_data(packet) + header_size,
                                    packet_size - header_size)) {

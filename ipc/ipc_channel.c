@@ -51,7 +51,7 @@ static int debugflags = DBGBIT(GENERAL);
 #define IF_DBGOUT(what, code) do {} while (0)
 #endif
 #define	DBGOUT(what, fmt, ...) \
-    IF_DBGOUT(what, DBGPRINT("external_pci: " fmt "\n", ## __VA_ARGS__))
+    IF_DBGOUT(what, DBGPRINT("ipc_channel: " fmt "\n", ## __VA_ARGS__))
 
 bool setup_ipc_channel(IPCChannel *channel,
                        const char *socket_path, bool use_abstract_path)

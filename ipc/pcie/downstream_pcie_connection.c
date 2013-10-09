@@ -40,7 +40,7 @@ static int debugflags = DBGBIT(GENERAL);
 
 #define	DBGOUT(what, fmt, ...) do { \
     if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
+        fprintf(stderr, "downstream_pcie_connection: " fmt "\n", ## __VA_ARGS__); \
     } while (0)
 #else
 #define	DBGOUT(what, fmt, ...) do {} while (0)
@@ -258,14 +258,14 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
     return data.val;
 }
 
-void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
-                                          PCIDevice *pci_dev,
-                                          uint16_t external_device_id)
+void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
+                                      PCIDevice *pci_dev,
+                                      uint16_t external_device_id)
 {
     PCIeRequest *request;
     uint16_t requester_id = pcie_requester_id(pci_dev);
     uint8_t tag;
-    DBGOUT(REQUESTS, "in send_special_downstream_pcie_request for device %s", pci_dev->name);
+    DBGOUT(REQUESTS, "in send_special_downstream_pcie_msg for device %s", pci_dev->name);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -275,13 +275,13 @@ void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
     } else {
         DBGOUT(REQUESTS, "Allocated PCIe request for device %s", pci_dev->name);
     }
-    if (!send_ipc_pcie_special_request(&connection->connection.channel,
-                                       requester_id,
-                                       tag,
-                                       pci_bus_num(pci_dev->bus),
-                                       PCI_SLOT(pci_dev->devfn),
-                                       PCI_FUNC(pci_dev->devfn),
-                                       external_device_id)) {
+    if (!send_ipc_pcie_special_msg(&connection->connection.channel,
+                                   requester_id,
+                                   tag,
+                                   pci_bus_num(pci_dev->bus),
+                                   PCI_SLOT(pci_dev->devfn),
+                                   PCI_FUNC(pci_dev->devfn),
+                                   external_device_id)) {
         error_report("Cannot send connection packet for device %s\n", pci_dev->name);
     }
     pcie_request_done(request);

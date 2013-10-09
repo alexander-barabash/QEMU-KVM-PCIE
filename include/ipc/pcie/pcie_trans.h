@@ -6,40 +6,45 @@
 #include <string.h>
 
 typedef enum PCIE_Transaction_Type {
-  PCIE_PAYLOAD_MARK = 0x40,
-  PCIE_LONG_HEADER_MARK = 0x20,
-  PCIE_MESSAGE_MARK = 0x10,
-  PCIE_LOCKED_TRANSACTION_MARK = 0x01,
+    PCIE_PAYLOAD_MARK = 0x40,
+    PCIE_LONG_HEADER_MARK = 0x20,
+    PCIE_MESSAGE_MARK = 0x10,
+    PCIE_LOCKED_TRANSACTION_MARK = 0x01,
 
-  PCIE_MEMORY_REQUEST = 0x00,
-  PCIE_LOCKED_MEMORY_REQUEST = (PCIE_MEMORY_REQUEST |
-                                PCIE_LOCKED_TRANSACTION_MARK),
-  PCIE_IO_REQUEST = 0x02,
-  PCIE_CONFIG_TYPE0_REQUEST = 0x04,
-  PCIE_CONFIG_TYPE1_REQUEST = (PCIE_CONFIG_TYPE0_REQUEST |
-                               PCIE_LOCKED_TRANSACTION_MARK),
-  PCIE_COMPLETION = 0x0a,
-  PCIE_LOCKED_COMPLETION = (PCIE_COMPLETION | PCIE_LOCKED_TRANSACTION_MARK),
+    PCIE_MEMORY_REQUEST = 0x00,
+    PCIE_LOCKED_MEMORY_REQUEST = (PCIE_MEMORY_REQUEST |
+                                  PCIE_LOCKED_TRANSACTION_MARK),
+    PCIE_IO_REQUEST = 0x02,
+    PCIE_CONFIG_TYPE0_REQUEST = 0x04,
+    PCIE_CONFIG_TYPE1_REQUEST = (PCIE_CONFIG_TYPE0_REQUEST |
+                                 PCIE_LOCKED_TRANSACTION_MARK),
+    PCIE_COMPLETION = 0x0a,
+    PCIE_LOCKED_COMPLETION = (PCIE_COMPLETION | PCIE_LOCKED_TRANSACTION_MARK),
 
-  PCIE_FETCH_AND_ADD_REQUEST = 0x0c,
-  PCIE_SWAP_REQUEST = 0x0d,
-  PCIE_COMPARE_AND_SWAP_REQUEST = 0x0e,
+    PCIE_FETCH_AND_ADD_REQUEST = 0x0c,
+    PCIE_SWAP_REQUEST = 0x0d,
+    PCIE_COMPARE_AND_SWAP_REQUEST = 0x0e,
 
-  PCIE_MESSAGE_ROUTING_MASK = 0x07,
-  PCIE_MESSAGE_MARK_MASK = PCIE_MESSAGE_MARK | 0x08,
+    PCIE_MESSAGE_ROUTING_MASK = 0x07,
+    PCIE_MESSAGE_MARK_MASK = PCIE_MESSAGE_MARK | 0x08,
 
-  PCIE_REQUEST_TO_IGNORE = 0x03,
+    PCIE_REQUEST_TO_IGNORE = 0x03,
 } PCIE_Transaction_Type;
 
 typedef enum PCIE_Message_Routing {
-  ROUTED_TO_ROOT_COMPLEX = 0x0,
-  ROUTED_BY_ADDRESS = 0x1,
-  ROUTED_BY_ID = 0x2,
-  BROADCAST_FROM_ROOT = 0x3,
-  LOCAL_ROUTING = 0x4,
-  GATEHERED_AND_ROUTED_TO_ROOT_COMPLEX = 0x5,
-  INVALID_MESSAGE_ROUTING = 0x8,
+    ROUTED_TO_ROOT_COMPLEX = 0x0,
+    ROUTED_BY_ADDRESS = 0x1,
+    ROUTED_BY_ID = 0x2,
+    BROADCAST_FROM_ROOT = 0x3,
+    LOCAL_ROUTING = 0x4,
+    GATEHERED_AND_ROUTED_TO_ROOT_COMPLEX = 0x5,
+    INVALID_MESSAGE_ROUTING = 0x8,
 } PCIE_Message_Routing;
+
+typedef enum PCIE_Message_Code {
+    VENDOR_DEFINED_MESSAGE_TYPE0 = 0x7e,
+    VENDOR_DEFINED_MESSAGE_TYPE1 = 0x7f,
+} PCIE_Message_Code;
 
 typedef enum PCIE_Completion_Status {
   SUCCESSFUL_COMPLETION = 0x0,
@@ -84,12 +89,6 @@ bool pcie_trans_is_request_to_ignore(const uint8_t *trans_data)
 {
     return
         (pcie_trans_get_transaction_type(trans_data) == PCIE_REQUEST_TO_IGNORE);
-}
-
-static inline
-bool pcie_trans_is_special_request(const uint8_t *trans_data)
-{
-    return pcie_trans_is_request_to_ignore(trans_data);
 }
 
 static inline
@@ -208,6 +207,73 @@ static inline
 uint8_t pcie_trans_get_message_code(const uint8_t *trans_data)
 {
     return trans_data[7];
+}
+
+static inline
+void pcie_trans_set_vendor_defined_message_vendor_id(uint8_t *trans_data,
+                                                     uint16_t vendor_id)
+{
+    trans_data[10] = (uint8_t)(vendor_id & 0xff);
+    trans_data[11] = (uint8_t)(vendor_id >> 8);
+}
+
+static inline
+uint16_t pcie_trans_get_vendor_defined_message_vendor_id(const uint8_t *trans_data)
+{
+    return (uint16_t)(trans_data[10] |
+                      (uint16_t)(trans_data[11] << 8));
+}
+
+static inline
+void pcie_trans_set_vendor_defined_message_vendor_bytes(uint8_t *trans_data,
+                                                        uint8_t byte0,
+                                                        uint8_t byte1,
+                                                        uint8_t byte2,
+                                                        uint8_t byte3)
+{
+    trans_data[12] = byte0;
+    trans_data[13] = byte1;
+    trans_data[14] = byte2;
+    trans_data[15] = byte3;
+}
+
+static inline
+void pcie_trans_get_vendor_defined_message_vendor_bytes(const uint8_t *trans_data,
+                                                        uint8_t *byte0,
+                                                        uint8_t *byte1,
+                                                        uint8_t *byte2,
+                                                        uint8_t *byte3)
+{
+    *byte0 = trans_data[12];
+    *byte1 = trans_data[13];
+    *byte2 = trans_data[14];
+    *byte3 = trans_data[15];
+}
+
+static inline
+void pcie_trans_set_vendor_defined_message_vendor_def(uint8_t *trans_data,
+                                                      uint32_t vendor_def)
+{
+    pcie_trans_set_vendor_defined_message_vendor_bytes(trans_data,
+                                                       (uint8_t)(vendor_def & 0xff),
+                                                       (uint8_t)(vendor_def >> 8),
+                                                       (uint8_t)(vendor_def >> 16),
+                                                       (uint8_t)(vendor_def >> 24));
+}
+
+static inline
+uint32_t pcie_trans_get_vendor_defined_message_vendor_def(const uint8_t *trans_data)
+{
+    uint8_t byte0, byte1, byte2, byte3;
+    pcie_trans_get_vendor_defined_message_vendor_bytes(trans_data,
+                                                       &byte0,
+                                                       &byte1,
+                                                       &byte2,
+                                                       &byte3);
+    return (uint32_t)(byte0 |
+                      (uint32_t)(byte1 << 8) |
+                      (uint32_t)(byte2 << 16) |
+                      (uint32_t)(byte3 << 24));
 }
 
 static inline
@@ -1027,20 +1093,27 @@ void pcie_trans_encode_config_request(uint8_t trans_data[16],
 }
 
 static inline
-void pcie_trans_encode_special_request(uint8_t trans_data[16],
-                                       uint16_t requester_id,
-                                       uint8_t tag,
-                                       uint8_t bus_num,
-                                       uint8_t dev_num,
-                                       uint8_t func_num,
-                                       uint16_t external_device_id) {
-    pcie_trans_clear(trans_data);
-    pcie_trans_set_transaction_type(trans_data, PCIE_REQUEST_TO_IGNORE);
-    pcie_trans_set_payload_mark(trans_data, false);
-    pcie_trans_set_request_requester_id(trans_data, requester_id);
-    pcie_trans_set_request_tag(trans_data, tag);
-    pcie_trans_set_routing_target_device(trans_data, bus_num, dev_num, func_num);
-    pcie_trans_set_target_register(trans_data, external_device_id);
+void pcie_trans_encode_special_msg(uint8_t trans_data[16],
+                                   uint16_t requester_id,
+                                   uint8_t tag,
+                                   uint8_t bus_num,
+                                   uint8_t dev_num,
+                                   uint8_t func_num,
+                                   uint16_t external_device_id) {
+    pcie_trans_encode_msg_request_base(trans_data,
+                                       LOCAL_ROUTING,
+                                       /* message_code = */ VENDOR_DEFINED_MESSAGE_TYPE0,
+                                       /* with_data = */ false,
+                                       requester_id,
+                                       tag,
+                                       /* size = */ 0);
+    
+    pcie_trans_set_vendor_defined_message_vendor_id(trans_data, /* vendor_id = */ 0);
+    pcie_trans_set_vendor_defined_message_vendor_bytes(trans_data, 
+                                                       (uint8_t)bus_num,
+                                                       (uint8_t)((dev_num << 3) | func_num),
+                                                       (uint8_t)(external_device_id & 0xFF),
+                                                       (uint8_t)(external_device_id >> 8));
 }
 
 static inline

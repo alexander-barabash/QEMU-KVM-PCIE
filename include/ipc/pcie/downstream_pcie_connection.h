@@ -62,6 +62,6 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
                                      PCIDevice *pci_dev,
                                      uint32_t addr, unsigned size);
 
-void send_special_downstream_pcie_request(DownstreamPCIeConnection *connection,
-                                          PCIDevice *pci_dev,
-                                          uint16_t external_device_id);
+void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
+                                      PCIDevice *pci_dev,
+                                      uint16_t external_device_id);

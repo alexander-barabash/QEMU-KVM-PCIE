@@ -635,11 +635,15 @@ static int pci_external_init(PCIDevice *pci_dev)
                d->ipc_socket_path, (d->flags & (1 << USE_ABSTRACT_SOCKET_FLAG_NR)));
     }
 
-    send_special_downstream_pcie_request(d->ipc_connection,
-                                         pci_dev,
-                                         d->external_device_id);
-    DBGOUT(INITIAL, "Sent special PCI request for device %s (ID=%d)\n",
-           pci_dev->name, d->external_device_id);
+    send_special_downstream_pcie_msg(d->ipc_connection,
+                                     pci_dev,
+                                     d->external_device_id);
+    DBGOUT(INITIAL, "Sent special PCI message for device %s %d:%d:%d (ID=%d)\n",
+           pci_dev->name,
+           (unsigned)pci_bus_num(pci_dev->bus),
+           (unsigned)PCI_SLOT(pci_dev->devfn),
+           (unsigned)PCI_FUNC(pci_dev->devfn),
+           d->external_device_id);
 
     for (ii = 0; ii < PCI_NUM_REGIONS; ++ii, ++bar_info, ++io_region) {
         bar_info->dev = d;
