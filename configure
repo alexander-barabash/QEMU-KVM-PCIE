@@ -2238,10 +2238,10 @@ if test "$mingw32" = yes; then
 else
     glib_req_ver=2.12
 fi
-if $pkg_config --atleast-version=$glib_req_ver gthread-2.0 > /dev/null 2>&1
+if $pkg_config --atleast-version=$glib_req_ver gthread-2.0 gmodule-2.0 > /dev/null 2>&1
 then
-    glib_cflags=`$pkg_config --cflags gthread-2.0 2>/dev/null`
-    glib_libs=`$pkg_config --libs gthread-2.0 2>/dev/null`
+    glib_cflags=`$pkg_config --cflags gthread-2.0 gmodule-2.0 2>/dev/null`
+    glib_libs=`$pkg_config --libs gthread-2.0 gmodule-2.0 2>/dev/null`
     LIBS="$glib_libs $LIBS"
     libs_qga="$glib_libs $libs_qga"
 else
