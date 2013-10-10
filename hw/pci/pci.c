@@ -61,6 +61,8 @@ static Property pci_props[] = {
                     QEMU_PCI_CAP_MSI_BITNR, false),
     DEFINE_PROP_BIT("msix", PCIDevice, cap_present,
                     QEMU_PCI_CAP_MSIX_BITNR, false),
+    DEFINE_PROP_UINT8("msi_cap", PCIDevice, msi_cap, 0),
+    DEFINE_PROP_UINT8("msix_cap", PCIDevice, msix_cap, 0),
     DEFINE_PROP_END_OF_LIST()
 };
 
