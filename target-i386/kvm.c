@@ -34,7 +34,7 @@
 #include <asm/hyperv.h>
 #include "hw/pci/pci.h"
 
-//#define DEBUG_KVM
+#define DEBUG_KVM
 
 #ifdef DEBUG_KVM
 #define DPRINTF(fmt, ...) \
@@ -1914,6 +1914,45 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
     X86CPU *x86_cpu = X86_CPU(cpu);
     CPUX86State *env = &x86_cpu->env;
     int ret;
+    static  __thread bool was;
+    static __thread bool print_preemption_report;
+    if(!was) {
+        char *KVM_PREEMPTION_REPORT = getenv("KVM_PREEMPTION_REPORT");
+        if (KVM_PREEMPTION_REPORT && *KVM_PREEMPTION_REPORT && (*KVM_PREEMPTION_REPORT != '0')) {
+            print_preemption_report = true;
+        }
+        was = true;
+        //system("xterm");
+    }
+
+    if (print_preemption_report) {
+        __u64 new_secs;
+        struct preemption_debug_data *debug = &run->preemption_debug_data;
+        new_secs = (debug->steal + debug->accumulate_preemption_timer) / (2000 * ((1000 * 1000) >> 5));
+        if(new_secs > debug->reported_secs) {
+            __u64 diff_secs = new_secs - debug->reported_secs;
+            __u64 preemption_timer = debug->accumulate_preemption_timer - debug->private_steal;
+            if (!preemption_timer) preemption_timer = 1;
+            __u64 preemption_timer2 = debug->accumulate_preemption_timer;
+            if (!preemption_timer2) preemption_timer2 = 1;
+            __u64 netto_rate = (2000 * ((1000 * 1000) >> 5)) * debug->exit_counter / preemption_timer;
+            __u64 brutto_rate = (2000 * ((1000 * 1000) >> 5)) * debug->exit_counter / preemption_timer2;
+            debug->reported_secs = new_secs;
+            DPRINTF("CPU %d run for %lld secs (diff %lld)  -- %lld e/s netto %lld e/s brutto. "
+                    "Preemption diff %lld. %d CPUs%s running. Last read TSC %lld. "
+                    "AUX %d (%d calls). Branches: %lld.\n",
+                    cpu_index(cpu),
+                    new_secs, diff_secs,
+                    netto_rate, brutto_rate,
+                    (long long)(debug->front - debug->back),
+                    debug->num_unhalted_vcpus,
+                    debug->userspace_running? " and userspace" : "",
+                    debug->last_read_tsc,
+                    debug->last_read_tsc_aux,
+                    debug->tscp_counter,
+                    debug->accumulate_retired_branch_counter);
+        }
+    }
 
     /* Inject NMI */
     if (cpu->interrupt_request & CPU_INTERRUPT_NMI) {
@@ -2307,6 +2346,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         ret = kvm_handle_debug(cpu, &run->debug.arch);
+        break;
+    case KVM_EXIT_PREEMPTION_TIMER:
+        ret = 0;
         break;
     default:
         fprintf(stderr, "KVM: unknown exit reason %d\n", run->exit_reason);
