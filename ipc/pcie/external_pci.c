@@ -479,7 +479,7 @@ static void
 external_pci_write_direct(void *opaque, hwaddr addr, uint64_t val,
                           unsigned size)
 {
-    void *p = (void *)((long)opaque + addr);
+    void *p = (void *)((long)opaque + (long)addr);
     union {
         uint8_t byte;
         uint16_t word;
