@@ -272,6 +272,8 @@ external_pci_config_read(PCIDevice *dev, uint32_t address, int len)
                                       dev, address, len);
     le32_val = cpu_to_le32(val);
     memcpy(dev->config + address, &le32_val, len);
+    DBGOUT(GENERAL, "external_pci_config_read addr=0x%X len=%d val=0x%X",
+           address, len, val);
     return val;
 }
 
@@ -408,6 +410,9 @@ external_pci_config_write(PCIDevice *dev, uint32_t addr, uint32_t val,
             (d->last_written_pci_command & PCI_COMMAND_INTX_DISABLE) != 0;
     }
 #endif
+
+    DBGOUT(GENERAL, "external_pci_config_write addr=0x%X len=%d val=0x%x",
+           addr, l, val);
 
     write_downstream_pcie_config(d->ipc_connection,
                                  dev, addr, val, l);
@@ -555,14 +560,18 @@ static uint64_t
 external_pci_read_mmio(void *opaque, hwaddr addr, unsigned size)
 {
     BARInfo *bar_info = opaque;
+    uint64_t val;
 
     DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%llX size=%d",
            (unsigned long long)addr, size);
 
-    return read_downstream_pcie_memory(bar_info->dev->ipc_connection,
-                                       &bar_info->dev->dev,
-                                       bar_info->base_address + addr,
-                                       size);
+    val = read_downstream_pcie_memory(bar_info->dev->ipc_connection,
+                                      &bar_info->dev->dev,
+                                      bar_info->base_address + addr,
+                                      size);
+    DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%llX size=%d val=0x%llX",
+           (unsigned long long)addr, size, (unsigned long long)val);
+    return val;
 }
 
 static void
@@ -571,8 +580,8 @@ external_pci_write_mmio(void *opaque, hwaddr addr, uint64_t val,
 {
     BARInfo *bar_info = opaque;
     
-    DBGOUT(GENERAL, "external_pci_write_mmio addr=0x%llX val=0x%llX size=%d",
-           (unsigned long long)addr, (unsigned long long)val, size);
+    DBGOUT(GENERAL, "external_pci_write_mmio addr=0x%llX size=%d val=0x%llX",
+           (unsigned long long)addr, size, (unsigned long long)val);
 
     write_downstream_pcie_memory(bar_info->dev->ipc_connection,
                                  &bar_info->dev->dev,
@@ -584,14 +593,18 @@ static uint64_t
 external_pci_read_io(void *opaque, hwaddr addr, unsigned size)
 {
     BARInfo *bar_info = opaque;
+    uint64_t val;
 
     DBGOUT(GENERAL, "external_pci_read_io addr=0x%llX size=%d",
            (unsigned long long)addr, size);
 
-    return read_downstream_pcie_io(bar_info->dev->ipc_connection,
-                                   &bar_info->dev->dev,
-                                   bar_info->base_address + addr,
-                                   size);
+    val = read_downstream_pcie_io(bar_info->dev->ipc_connection,
+                                  &bar_info->dev->dev,
+                                  bar_info->base_address + addr,
+                                  size);
+    DBGOUT(GENERAL, "external_pci_read_io addr=0x%llX size=%d val=0x%llX",
+           (unsigned long long)addr, size, (unsigned long long)val);
+    return val;
 }
 
 static void
@@ -600,8 +613,8 @@ external_pci_write_io(void *opaque, hwaddr addr, uint64_t val,
 {
     BARInfo *bar_info = opaque;
     
-    DBGOUT(GENERAL, "external_pci_write_io addr=0x%llX val=0x%llX size=%d",
-           (unsigned long long)addr, (unsigned long long)val, size);
+    DBGOUT(GENERAL, "external_pci_write_io addr=0x%llX size=%d val=0x%llX",
+           (unsigned long long)addr, size, (unsigned long long)val);
 
     write_downstream_pcie_io(bar_info->dev->ipc_connection,
                              &bar_info->dev->dev,
