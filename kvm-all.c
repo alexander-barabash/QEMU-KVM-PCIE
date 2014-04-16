@@ -295,7 +295,7 @@ int kvm_init_vcpu(CPUState *cpu)
     {
         struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
         if (s->record_kvm_execution) {
-            kvm_cpu_state->record_stream_fd = kvm_vcpu_ioctl(cpu, KVM_OPEN_RECORD_STREAM, 0);
+            kvm_cpu_state->record_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAM, 0);
             if (kvm_cpu_state->record_stream_fd > 0) {
                 char *filename = (char *)malloc(strlen(s->record_directory) + 48);
                 sprintf(filename, "%s/kvm-record-%d", s->record_directory, cpu->cpu_index);
@@ -318,7 +318,7 @@ int kvm_init_vcpu(CPUState *cpu)
         }
 
         if (s->replay_kvm_execution) {
-            kvm_cpu_state->replay_stream_fd = kvm_vcpu_ioctl(cpu, KVM_OPEN_REPLAY_STREAM, 0);
+            kvm_cpu_state->replay_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAM, 0);
             if (kvm_cpu_state->replay_stream_fd > 0) {
                 char *filename = (char *)malloc(strlen(s->replay_directory) + 48);
                 sprintf(filename, "%s/kvm-record-%d", s->replay_directory, cpu->cpu_index);
@@ -1506,7 +1506,7 @@ int kvm_init(void)
         char *KVM_REPLAY = getenv("KVM_REPLAY");
         char *KVM_RECORD = getenv("KVM_RECORD");
         if (KVM_RECORD && *KVM_RECORD) {
-            execution_mode |= KVM_EXECUTION_MODE_RECORD;
+            execution_mode |= RKVM_EXECUTION_MODE_RECORD;
             s->record_kvm_execution = true;
             s->record_directory = strdup(KVM_RECORD);
             mkdir(s->record_directory, 0777);
@@ -1518,15 +1518,15 @@ int kvm_init(void)
         }
         if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
             (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
-            execution_mode |= KVM_EXECUTION_MODE_LOCKSTEP;
+            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
         }
         if (KVM_REPLAY && *KVM_REPLAY) {
-            execution_mode |= KVM_EXECUTION_MODE_REPLAY;
+            execution_mode |= RKVM_EXECUTION_MODE_REPLAY;
             s->replay_kvm_execution = true;
             s->replay_directory = strdup(KVM_REPLAY);
         }
-        kvm_vm_ioctl(s, KVM_SET_PREEMPTION_TIMER_QUANTUM, &quantum);
-        kvm_vm_ioctl(s, KVM_SET_EXECUTION_FLAG, &execution_mode);
+        kvm_vm_ioctl(s, RKVM_SET_TIMER_QUANTUM, &quantum);
+        kvm_vm_ioctl(s, RKVM_SET_EXECUTION_FLAG, &execution_mode);
     }
 
     missing_cap = kvm_check_extension_list(s, kvm_required_capabilites);
@@ -2279,24 +2279,24 @@ int kvm_on_sigbus(int code, void *addr)
     return kvm_arch_on_sigbus(code, addr);
 }
 
-static void kvm_userspace_entry(struct kvm_userspace_preemption_data *preemption_data) {
+static void kvm_userspace_entry(struct rkvm_userspace_data *preemption_data) {
     KVMState *s = kvm_state;
-    kvm_vm_ioctl(s, KVM_PREEMPTION_USERSPACE_ENTRY, preemption_data);
+    kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
     printf("kvm_userspace_entry at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
 }
 
-static void kvm_userspace_exit(struct kvm_userspace_preemption_data *preemption_data) {
+static void kvm_userspace_exit(struct rkvm_userspace_data *preemption_data) {
     KVMState *s = kvm_state;
-    kvm_vm_ioctl(s, KVM_PREEMPTION_USERSPACE_EXIT, preemption_data);
+    kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
     printf("kvm_userspace_exit at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
 }
 
-static void kvm_userspace_spend(struct kvm_userspace_preemption_data *preemption_data, unsigned time) {
+static void kvm_userspace_spend(struct rkvm_userspace_data *preemption_data, unsigned time) {
     KVMState *s = kvm_state;
     preemption_data->accumulate_preemption_timer +=
         (time + (1 << s->preemption_timer_rate) - 1) >> s->preemption_timer_rate;
 }
 
-void (*pkvm_userspace_entry)(struct kvm_userspace_preemption_data *) = kvm_userspace_entry;
-void (*pkvm_userspace_exit)(struct kvm_userspace_preemption_data *) = kvm_userspace_exit;
-void (*pkvm_userspace_spend)(struct kvm_userspace_preemption_data *preemption_data, unsigned time) = kvm_userspace_spend;
+void (*pkvm_userspace_entry)(struct rkvm_userspace_data *) = kvm_userspace_entry;
+void (*pkvm_userspace_exit)(struct rkvm_userspace_data *) = kvm_userspace_exit;
+void (*pkvm_userspace_spend)(struct rkvm_userspace_data *preemption_data, unsigned time) = kvm_userspace_spend;

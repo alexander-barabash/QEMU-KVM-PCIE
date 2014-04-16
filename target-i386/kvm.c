@@ -1917,8 +1917,8 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
     static  __thread bool was;
     static __thread bool print_preemption_report;
     if(!was) {
-        char *KVM_PREEMPTION_REPORT = getenv("KVM_PREEMPTION_REPORT");
-        if (KVM_PREEMPTION_REPORT && *KVM_PREEMPTION_REPORT && (*KVM_PREEMPTION_REPORT != '0')) {
+        char *RKVM_REPORT = getenv("RKVM_REPORT");
+        if (RKVM_REPORT && *RKVM_REPORT && (*RKVM_REPORT != '0')) {
             print_preemption_report = true;
         }
         was = true;
@@ -1927,7 +1927,7 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
 
     if (print_preemption_report) {
         __u64 new_secs;
-        struct preemption_debug_data *debug = &run->preemption_debug_data;
+        struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
         new_secs = (debug->steal + debug->accumulate_preemption_timer) / (2000 * ((1000 * 1000) >> 5));
         if(new_secs > debug->reported_secs) {
             __u64 diff_secs = new_secs - debug->reported_secs;

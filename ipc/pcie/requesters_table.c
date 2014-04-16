@@ -111,10 +111,10 @@ static bool pcie_request_wait_function(void *user_data) {
     return request->ready;
 }
 
-struct kvm_userspace_preemption_data;
-void (*pkvm_userspace_entry)(struct kvm_userspace_preemption_data *);
-void (*pkvm_userspace_exit)(struct kvm_userspace_preemption_data *);
-void (*pkvm_userspace_spend)(struct kvm_userspace_preemption_data *preemption_data, unsigned time);
+struct rkvm_userspace_data;
+void (*pkvm_userspace_entry)(struct rkvm_userspace_data *);
+void (*pkvm_userspace_exit)(struct rkvm_userspace_data *);
+void (*pkvm_userspace_spend)(struct rkvm_userspace_data *preemption_data, unsigned time);
 void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request)
 {
     int delay;
@@ -123,7 +123,7 @@ void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request)
         delay = atoi(PCIE_REQUEST_DELAY);
     else
         delay = 64;
-    struct kvm_userspace_preemption_data preemption_data;
+    struct rkvm_userspace_data preemption_data;
     pkvm_userspace_entry(&preemption_data);
     pkvm_userspace_spend(&preemption_data, delay);
     wait_on_ipc_connection(connection, pcie_request_wait_function, request);
