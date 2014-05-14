@@ -33,6 +33,7 @@
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 #include "qemu/event_notifier.h"
+#include "qemu/pump.h"
 #include "trace.h"
 
 /* This check must be after config-host.h is included */
@@ -112,17 +113,11 @@ struct KVMState
 
 struct KVMCPUState
 {
-    int record_stream_fd;
-    int record_file_fd;
+    struct qemu_pump record_pump;
+    struct qemu_pump record_tsc_pump;
+    struct qemu_pump replay_pump;
     int record_io_file_fd;
-    int replay_stream_fd;
-    int replay_file_fd;
     int replay_io_file_fd;
-    char replay_buffer[1024];
-    ssize_t replay_buffer_shift;
-    ssize_t replay_buffer_size;
-    ssize_t replay_total_read;
-    ssize_t replay_total_written;
 };
 
 KVMState *kvm_state;
@@ -295,22 +290,35 @@ int kvm_init_vcpu(CPUState *cpu)
     {
         struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
         if (s->record_kvm_execution) {
-            kvm_cpu_state->record_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAM, 0);
-            if (kvm_cpu_state->record_stream_fd > 0) {
+            int record_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAM, 0);
+            int record_tsc_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_TSC_RECORD_STREAM, 0);
+            if ((record_stream_fd > 0) && (record_tsc_stream_fd > 0)) {
+                int record_file_fd;
+                int record_tsc_file_fd;
                 char *filename = (char *)malloc(strlen(s->record_directory) + 48);
                 sprintf(filename, "%s/kvm-record-%d", s->record_directory, cpu->cpu_index);
-                kvm_cpu_state->record_file_fd = open(filename,
-                                                          O_CREAT | O_WRONLY | O_TRUNC,
-                                                          S_IRUSR | S_IWUSR);
+                record_file_fd = open(filename,
+                                      O_CREAT | O_WRONLY | O_TRUNC,
+                                      S_IRUSR | S_IWUSR);
+                sprintf(filename, "%s/kvm-tsc-record-%d", s->record_directory, cpu->cpu_index);
+                record_tsc_file_fd = open(filename,
+                                          O_CREAT | O_WRONLY | O_TRUNC,
+                                          S_IRUSR | S_IWUSR);
                 sprintf(filename, "%s/kvm-record-io-%d", s->record_directory, cpu->cpu_index);
                 kvm_cpu_state->record_io_file_fd = open(filename,
-                                                             O_CREAT | O_WRONLY | O_TRUNC,
-                                                             S_IRUSR | S_IWUSR);
+                                                        O_CREAT | O_WRONLY | O_TRUNC,
+                                                        S_IRUSR | S_IWUSR);
                 free(filename);
-                if ((kvm_cpu_state->record_file_fd < 0) || (kvm_cpu_state->record_io_file_fd < 0)) {
+                if ((record_file_fd < 0) || (record_tsc_file_fd < 0) || (kvm_cpu_state->record_io_file_fd < 0)) {
                     perror("Could not open record file");
                     exit(1);
                 }
+                init_pump(&kvm_cpu_state->record_pump,
+                          record_stream_fd,
+                          record_file_fd);
+                init_pump(&kvm_cpu_state->record_tsc_pump,
+                          record_tsc_stream_fd,
+                          record_tsc_file_fd);
             } else {
                 perror("Could not open record stream");
                 exit(1);
@@ -318,18 +326,22 @@ int kvm_init_vcpu(CPUState *cpu)
         }
 
         if (s->replay_kvm_execution) {
-            kvm_cpu_state->replay_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAM, 0);
-            if (kvm_cpu_state->replay_stream_fd > 0) {
+            int replay_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAM, 0);
+            if (replay_stream_fd > 0) {
+                int replay_file_fd;
                 char *filename = (char *)malloc(strlen(s->replay_directory) + 48);
                 sprintf(filename, "%s/kvm-record-%d", s->replay_directory, cpu->cpu_index);
-                kvm_cpu_state->replay_file_fd = open(filename, O_RDONLY);
+                replay_file_fd = open(filename, O_RDONLY);
                 sprintf(filename, "%s/kvm-record-io-%d", s->replay_directory, cpu->cpu_index);
                 kvm_cpu_state->replay_io_file_fd = open(filename, O_RDONLY);
                 free(filename);
-                if ((kvm_cpu_state->replay_file_fd < 0) || (kvm_cpu_state->replay_io_file_fd < 0)) {
+                if ((replay_file_fd < 0) || (kvm_cpu_state->replay_io_file_fd < 0)) {
                     perror("Could not open replay file");
                     exit(1);
                 }
+                init_pump(&kvm_cpu_state->replay_pump,
+                          replay_file_fd,
+                          replay_stream_fd);
             } else {
                 perror("Could not open replay stream");
                 exit(1);
@@ -1505,27 +1517,34 @@ int kvm_init(void)
         char *KVM_PREEMPTION_SEQUENTIAL = getenv("KVM_PREEMPTION_SEQUENTIAL");
         char *KVM_REPLAY = getenv("KVM_REPLAY");
         char *KVM_RECORD = getenv("KVM_RECORD");
+        char *KVM_LOCKSTEP = getenv("KVM_LOCKSTEP");
+        if (KVM_LOCKSTEP && *KVM_LOCKSTEP) {
+            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
+        }
         if (KVM_RECORD && *KVM_RECORD) {
             execution_mode |= RKVM_EXECUTION_MODE_RECORD;
             s->record_kvm_execution = true;
             s->record_directory = strdup(KVM_RECORD);
             mkdir(s->record_directory, 0777);
         }
-        if (KVM_PREEMPTION_QUANTUM) {
-            quantum = atoi(KVM_PREEMPTION_QUANTUM) >> (s->preemption_timer_rate);
-        } else {
-            quantum = 512;
-        }
-        if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
-            (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
-            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
-        }
         if (KVM_REPLAY && *KVM_REPLAY) {
             execution_mode |= RKVM_EXECUTION_MODE_REPLAY;
             s->replay_kvm_execution = true;
             s->replay_directory = strdup(KVM_REPLAY);
         }
-        kvm_vm_ioctl(s, RKVM_SET_TIMER_QUANTUM, &quantum);
+        if (KVM_PREEMPTION_QUANTUM) {
+            quantum = atoi(KVM_PREEMPTION_QUANTUM) >> (s->preemption_timer_rate);
+        } else if(!KVM_REPLAY || !*KVM_REPLAY) {
+            quantum = 512;
+        } else {
+            quantum = 0;
+        }
+        if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
+            (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
+            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
+        }
+        if(quantum > 0)
+            kvm_vm_ioctl(s, RKVM_SET_TIMER_QUANTUM, &quantum);
         kvm_vm_ioctl(s, RKVM_SET_EXECUTION_FLAG, &execution_mode);
     }
 
@@ -1728,6 +1747,10 @@ int kvm_cpu_exec(CPUState *cpu)
     }
 
     do {
+        pump_data(&cpu->kvm_cpu_state->record_pump);
+        pump_data(&cpu->kvm_cpu_state->record_tsc_pump);
+        pump_data(&cpu->kvm_cpu_state->replay_pump);
+
         if (cpu->kvm_vcpu_dirty) {
             kvm_arch_put_registers(cpu, KVM_PUT_RUNTIME_STATE);
             cpu->kvm_vcpu_dirty = false;
@@ -1761,92 +1784,6 @@ int kvm_cpu_exec(CPUState *cpu)
             abort();
         }
 
-        {
-            struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
-            if (cpu->kvm_cpu_state->record_stream_fd > 0) {
-                char kvm_record_buf[1024];
-                do {
-                    ssize_t read_bytes = read(kvm_cpu_state->record_stream_fd, kvm_record_buf, 1024);
-                    if (read_bytes == 0) {
-                        break;
-                    }
-                    if (read_bytes < 0) {
-                        perror("Could not read record file");
-                        kvm_cpu_state->record_stream_fd = 0;
-                        close(kvm_cpu_state->record_file_fd);
-                        break;
-                    }
-                    write(kvm_cpu_state->record_file_fd, kvm_record_buf, read_bytes);
-                } while (true);
-            }
-
-            if (cpu->kvm_cpu_state->replay_stream_fd > 0) {
-                do {
-                    ssize_t read_bytes;
-                    ssize_t written_bytes = 0;
-                    read_bytes = kvm_cpu_state->replay_buffer_size - kvm_cpu_state->replay_buffer_shift;
-                    if (read_bytes > 0) {
-#if 1
-                        written_bytes = write(kvm_cpu_state->replay_stream_fd,
-                                              kvm_cpu_state->replay_buffer + kvm_cpu_state->replay_buffer_shift,
-                                              read_bytes);
-#endif
-                        if(written_bytes < 0) {
-                            break;
-                        }
-                        kvm_cpu_state->replay_total_written += written_bytes;
-                        if (((kvm_cpu_state->replay_total_written - written_bytes) / 100000) != (kvm_cpu_state->replay_total_written / 100000)) {
-                            fprintf(stderr, "Write %lld KBytes to replay stream\n", (long long)((kvm_cpu_state->replay_total_written / 100000) * 100));
-                        }
-                        if (written_bytes < read_bytes) {
-                            kvm_cpu_state->replay_buffer_shift += written_bytes;
-                            break;
-                        }
-                        kvm_cpu_state->replay_buffer_shift = 0;
-                        kvm_cpu_state->replay_buffer_size = 0;
-                    }
-                    do {
-                        read_bytes = read(kvm_cpu_state->replay_file_fd, kvm_cpu_state->replay_buffer, 1024);
-                        if (read_bytes == 0) {
-                            break;
-                        }
-                        if (read_bytes < 0) {
-                            perror("Could not read replay file");
-                            kvm_cpu_state->replay_stream_fd = 0;
-                            close(kvm_cpu_state->replay_file_fd);
-                            break;
-                        }
-                        kvm_cpu_state->replay_total_read += read_bytes;
-                        if (((kvm_cpu_state->replay_total_read - read_bytes) / 100000) != (kvm_cpu_state->replay_total_read / 100000)) {
-                            fprintf(stderr, "Read %lld KBytes from replay file\n", (long long)((kvm_cpu_state->replay_total_read / 100000) * 100));
-                        }
-#if 1
-                        written_bytes = write(kvm_cpu_state->replay_stream_fd, kvm_cpu_state->replay_buffer, read_bytes);
-#endif
-                        if (written_bytes > 0) {
-                            kvm_cpu_state->replay_total_written += written_bytes;
-                            if (((kvm_cpu_state->replay_total_written - written_bytes) / 100000) != (kvm_cpu_state->replay_total_written / 100000)) {
-                                fprintf(stderr, "Write %lld KBytes to replay stream\n", (long long)((kvm_cpu_state->replay_total_written / 100000) * 100));
-                            }
-                            if (written_bytes < read_bytes) {
-                                kvm_cpu_state->replay_buffer_shift = written_bytes;
-                                kvm_cpu_state->replay_buffer_size = read_bytes;
-                                break;
-                            }
-                        } else {
-                            kvm_cpu_state->replay_buffer_shift = 0;
-                            kvm_cpu_state->replay_buffer_size = read_bytes;
-                            break;
-                        }
-                        kvm_cpu_state->replay_buffer_shift = 0;
-                        kvm_cpu_state->replay_buffer_size = 0;
-                        if (read_bytes < 1024) {
-                            break;
-                        }
-                    } while (true);
-                } while (false);
-            }
-        }
         trace_kvm_run_exit(cpu->cpu_index, run->exit_reason);
         switch (run->exit_reason) {
         case KVM_EXIT_IO: {
