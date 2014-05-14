@@ -1927,8 +1927,14 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
 
     if (print_preemption_report) {
         __u64 new_secs;
+        __u64 steal_milli_secs;
+        __u64 private_steal_milli_secs;
+        __u64 last_read_tsc_milli_secs;
         struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
         new_secs = (debug->steal + debug->accumulate_preemption_timer) / (2000 * ((1000 * 1000) >> 5));
+        steal_milli_secs = debug->steal / (2 * ((1000 * 1000) >> 5));
+        private_steal_milli_secs = debug->private_steal / (2 * ((1000 * 1000) >> 5));
+        last_read_tsc_milli_secs = debug->last_read_tsc / (2 * (1000 * 1000));
         if(new_secs > debug->reported_secs) {
             __u64 diff_secs = new_secs - debug->reported_secs;
             __u64 preemption_timer = debug->accumulate_preemption_timer - debug->private_steal;
@@ -1939,18 +1945,19 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
             __u64 brutto_rate = (2000 * ((1000 * 1000) >> 5)) * debug->exit_counter / preemption_timer2;
             debug->reported_secs = new_secs;
             DPRINTF("CPU %d run for %lld secs (diff %lld)  -- %lld e/s netto %lld e/s brutto. "
-                    "Preemption diff %lld. %d CPUs%s running. Last read TSC %lld. "
-                    "AUX %d (%d calls). Branches: %lld.\n",
+                    "Preemption diff %lld. %d CPUs%s running. Last read TSC %lld ms. "
+                    "AUX %d calls. Branches: %lld. Steal: %lld ms. Private steal %lld ms.\n",
                     cpu_index(cpu),
                     new_secs, diff_secs,
                     netto_rate, brutto_rate,
                     (long long)(debug->front - debug->back),
                     debug->num_unhalted_vcpus,
                     debug->userspace_running? " and userspace" : "",
-                    debug->last_read_tsc,
-                    debug->last_read_tsc_aux,
+                    last_read_tsc_milli_secs,
                     debug->tscp_counter,
-                    debug->accumulate_retired_branch_counter);
+                    debug->accumulate_retired_branch_counter,
+                    steal_milli_secs,
+                    private_steal_milli_secs);
         }
     }
 
@@ -1985,7 +1992,7 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
                 struct kvm_interrupt intr;
 
                 intr.irq = irq;
-                DPRINTF("injected interrupt %d\n", irq);
+                //DPRINTF("CPU %d injected interrupt 0x%x\n", cpu_index(cpu), irq);
                 ret = kvm_vcpu_ioctl(cpu, KVM_INTERRUPT, &intr);
                 if (ret < 0) {
                     fprintf(stderr,
@@ -2005,7 +2012,7 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
             run->request_interrupt_window = 0;
         }
 
-        DPRINTF("setting tpr\n");
+        //DPRINTF("setting tpr\n");
         run->cr8 = cpu_get_apic_tpr(env->apic_state);
     }
 }
@@ -2312,7 +2319,7 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
 
     switch (run->exit_reason) {
     case KVM_EXIT_HLT:
-        DPRINTF("handle_hlt\n");
+        //DPRINTF("handle_hlt\n");
         ret = kvm_handle_halt(cpu);
         break;
     case KVM_EXIT_SET_TPR:
@@ -2348,6 +2355,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
         ret = kvm_handle_debug(cpu, &run->debug.arch);
         break;
     case KVM_EXIT_PREEMPTION_TIMER:
+        ret = 0;
+        break;
+    case KVM_EXIT_RKVM:
         ret = 0;
         break;
     default:
