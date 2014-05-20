@@ -113,11 +113,12 @@ struct KVMState
 
 struct KVMCPUState
 {
-    struct qemu_pump record_pump;
-    struct qemu_pump record_tsc_pump;
-    struct qemu_pump replay_pump;
+    struct qemu_pump record_pump[8];
+    struct qemu_pump replay_pump[8];
     int record_io_file_fd;
     int replay_io_file_fd;
+    int record_pump_count;
+    int replay_pump_count;
 };
 
 KVMState *kvm_state;
@@ -289,63 +290,72 @@ int kvm_init_vcpu(CPUState *cpu)
 
     {
         struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
+        struct rkvm_stream_fds stream_fds;
+        int i;
         if (s->record_kvm_execution) {
-            int record_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAM, 0);
-            int record_tsc_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_TSC_RECORD_STREAM, 0);
-            if ((record_stream_fd > 0) && (record_tsc_stream_fd > 0)) {
-                int record_file_fd;
-                int record_tsc_file_fd;
+            if (kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAMS, &stream_fds) == 0) {
                 char *filename = (char *)malloc(strlen(s->record_directory) + 48);
-                sprintf(filename, "%s/kvm-record-%d", s->record_directory, cpu->cpu_index);
-                record_file_fd = open(filename,
-                                      O_CREAT | O_WRONLY | O_TRUNC,
-                                      S_IRUSR | S_IWUSR);
-                sprintf(filename, "%s/kvm-tsc-record-%d", s->record_directory, cpu->cpu_index);
-                record_tsc_file_fd = open(filename,
-                                          O_CREAT | O_WRONLY | O_TRUNC,
-                                          S_IRUSR | S_IWUSR);
-                sprintf(filename, "%s/kvm-record-io-%d", s->record_directory, cpu->cpu_index);
-                kvm_cpu_state->record_io_file_fd = open(filename,
-                                                        O_CREAT | O_WRONLY | O_TRUNC,
-                                                        S_IRUSR | S_IWUSR);
-                free(filename);
-                if ((record_file_fd < 0) || (record_tsc_file_fd < 0) || (kvm_cpu_state->record_io_file_fd < 0)) {
+                int fd;
+                sprintf(filename, "%s/rkvm-io-cpu%d", s->record_directory, cpu->cpu_index);
+                fd = open(filename,
+                          O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                if (fd < 0) {
                     perror("Could not open record file");
                     exit(1);
                 }
-                init_pump(&kvm_cpu_state->record_pump,
-                          record_stream_fd,
-                          record_file_fd);
-                init_pump(&kvm_cpu_state->record_tsc_pump,
-                          record_tsc_stream_fd,
-                          record_tsc_file_fd);
+                kvm_cpu_state->record_io_file_fd = fd;
+                for (i = 0; i < stream_fds.count; ++i) {
+                    sprintf(filename, "%s/rkvm-cpu%d-%s", s->record_directory,
+                            cpu->cpu_index, stream_fds.name[i]);
+                    fd = open(filename,
+                              O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                    if (fd < 0) {
+                        perror("Could not open record file");
+                        exit(1);
+                    }
+                    init_pump(&kvm_cpu_state->record_pump[i],
+                              stream_fds.fd[i], fd);
+                }
+                free(filename);
+                kvm_cpu_state->record_pump_count = stream_fds.count;
             } else {
-                perror("Could not open record stream");
+                perror("Could not open record streams");
                 exit(1);
             }
+        } else {
+            kvm_cpu_state->record_pump_count = 0;
         }
 
         if (s->replay_kvm_execution) {
-            int replay_stream_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAM, 0);
-            if (replay_stream_fd > 0) {
-                int replay_file_fd;
+            if (kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAMS, &stream_fds) == 0) {
                 char *filename = (char *)malloc(strlen(s->replay_directory) + 48);
-                sprintf(filename, "%s/kvm-record-%d", s->replay_directory, cpu->cpu_index);
-                replay_file_fd = open(filename, O_RDONLY);
-                sprintf(filename, "%s/kvm-record-io-%d", s->replay_directory, cpu->cpu_index);
-                kvm_cpu_state->replay_io_file_fd = open(filename, O_RDONLY);
-                free(filename);
-                if ((replay_file_fd < 0) || (kvm_cpu_state->replay_io_file_fd < 0)) {
+                int fd;
+                sprintf(filename, "%s/rkvm-io-cpu%d", s->replay_directory, cpu->cpu_index);
+                fd = open(filename, O_RDONLY);
+                if (fd < 0) {
                     perror("Could not open replay file");
                     exit(1);
                 }
-                init_pump(&kvm_cpu_state->replay_pump,
-                          replay_file_fd,
-                          replay_stream_fd);
+                kvm_cpu_state->replay_io_file_fd = fd;
+                for (i = 0; i < stream_fds.count; ++i) {
+                    sprintf(filename, "%s/rkvm-cpu%d-%s", s->record_directory,
+                            cpu->cpu_index, stream_fds.name[i]);
+                    fd = open(filename, O_RDONLY);
+                    if (fd < 0) {
+                        perror("Could not open replay file");
+                        exit(1);
+                    }
+                    init_pump(&kvm_cpu_state->replay_pump[i],
+                              fd, stream_fds.fd[i]);
+                }
+                free(filename);
+                kvm_cpu_state->replay_pump_count = stream_fds.count;
             } else {
-                perror("Could not open replay stream");
+                perror("Could not open replay streams");
                 exit(1);
             }
+        } else {
+            kvm_cpu_state->replay_pump_count = 0;
         }
     }
     fprintf(stderr, "KVM_GET_TSC_KHZ = %d\n", kvm_vcpu_ioctl(cpu, KVM_GET_TSC_KHZ, 0));
@@ -1747,9 +1757,13 @@ int kvm_cpu_exec(CPUState *cpu)
     }
 
     do {
-        pump_data(&cpu->kvm_cpu_state->record_pump);
-        pump_data(&cpu->kvm_cpu_state->record_tsc_pump);
-        pump_data(&cpu->kvm_cpu_state->replay_pump);
+        int i;
+        for (i = 0; i < cpu->kvm_cpu_state->record_pump_count; ++i) {
+            pump_data(&cpu->kvm_cpu_state->record_pump[i]);
+        }
+        for (i = 0; i < cpu->kvm_cpu_state->replay_pump_count; ++i) {
+            pump_data(&cpu->kvm_cpu_state->replay_pump[i]);
+        }
 
         if (cpu->kvm_vcpu_dirty) {
             kvm_arch_put_registers(cpu, KVM_PUT_RUNTIME_STATE);
