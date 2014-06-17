@@ -28,6 +28,8 @@
 struct qemu_pump {
     int in;
     int out;
+    FILE *fin;
+    FILE *fout;
     char buf[1024];
     ssize_t buffer_shift;
     ssize_t buffer_size;
@@ -35,12 +37,15 @@ struct qemu_pump {
     ssize_t total_written;
 };
 
-static inline void init_pump(struct qemu_pump *pump, int in, int out)
+static inline void init_pump(struct qemu_pump *pump, int in, FILE *fin, int out, FILE *fout)
 {
     pump->in = in;
     pump->out = out;
+    pump->fin = fin;
+    pump->fout = fout;
 }
 
 int pump_data(struct qemu_pump *pump);
+int pump_flush(struct qemu_pump *pump);
 
 #endif /* __QEMU_PUMP_H__ */

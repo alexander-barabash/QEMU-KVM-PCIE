@@ -1246,6 +1246,7 @@ void memory_region_reset_dirty(MemoryRegion *mr, hwaddr addr,
                                     1 << client);
 }
 
+int memory_region_get_ram_ptr_ok;
 void *memory_region_get_ram_ptr(MemoryRegion *mr)
 {
     if (mr->alias) {
@@ -1254,6 +1255,10 @@ void *memory_region_get_ram_ptr(MemoryRegion *mr)
 
     assert(mr->terminates);
 
+    if (!memory_region_get_ram_ptr_ok) {
+        fprintf(stderr, "memory_region_get_ram_ptr 0x%llx\n",
+                (long long)(mr->ram_addr & TARGET_PAGE_MASK));
+    }
     return qemu_get_ram_ptr(mr->ram_addr & TARGET_PAGE_MASK);
 }
 

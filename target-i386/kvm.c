@@ -1928,36 +1928,23 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
     if (print_preemption_report) {
         __u64 new_secs;
         __u64 steal_milli_secs;
-        __u64 private_steal_milli_secs;
         __u64 last_read_tsc_milli_secs;
         struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
         new_secs = (debug->steal + debug->accumulate_preemption_timer) / (2000 * ((1000 * 1000) >> 5));
         steal_milli_secs = debug->steal / (2 * ((1000 * 1000) >> 5));
-        private_steal_milli_secs = debug->private_steal / (2 * ((1000 * 1000) >> 5));
         last_read_tsc_milli_secs = debug->last_read_tsc / (2 * (1000 * 1000));
         if(new_secs > debug->reported_secs) {
             __u64 diff_secs = new_secs - debug->reported_secs;
-            __u64 preemption_timer = debug->accumulate_preemption_timer - debug->private_steal;
-            if (!preemption_timer) preemption_timer = 1;
-            __u64 preemption_timer2 = debug->accumulate_preemption_timer;
-            if (!preemption_timer2) preemption_timer2 = 1;
-            __u64 netto_rate = (2000 * ((1000 * 1000) >> 5)) * debug->exit_counter / preemption_timer;
-            __u64 brutto_rate = (2000 * ((1000 * 1000) >> 5)) * debug->exit_counter / preemption_timer2;
             debug->reported_secs = new_secs;
-            DPRINTF("CPU %d run for %lld secs (diff %lld)  -- %lld e/s netto %lld e/s brutto. "
-                    "Preemption diff %lld. %d CPUs%s running. Last read TSC %lld ms. "
-                    "AUX %d calls. Branches: %lld. Steal: %lld ms. Private steal %lld ms.\n",
+            DPRINTF("CPU %d run for %lld secs (diff %lld). "
+                    "Preemption diff %lld. Last read TSC %lld ms. "
+                    "AUX %d calls. Steal: %lld ms.\n",
                     cpu_index(cpu),
                     new_secs, diff_secs,
-                    netto_rate, brutto_rate,
                     (long long)(debug->front - debug->back),
-                    debug->num_unhalted_vcpus,
-                    debug->userspace_running? " and userspace" : "",
                     last_read_tsc_milli_secs,
                     debug->tscp_counter,
-                    debug->accumulate_retired_branch_counter,
-                    steal_milli_secs,
-                    private_steal_milli_secs);
+                    steal_milli_secs);
         }
     }
 

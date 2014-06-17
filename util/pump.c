@@ -31,9 +31,11 @@ static inline void account_for_read_bytes(struct qemu_pump *pump, ssize_t read_b
         return;
     }
     pump->total_read += read_bytes;
+#ifdef DEBUG_PUMP
     if (((pump->total_read - read_bytes) / 100000) != (pump->total_read / 100000)) {
         fprintf(stderr, "Read %lld KBytes\n", (long long)((pump->total_read / 100000) * 100));
     }
+#endif
 }
 
 static inline void account_for_written_bytes(struct qemu_pump *pump, ssize_t written_bytes)
@@ -42,9 +44,11 @@ static inline void account_for_written_bytes(struct qemu_pump *pump, ssize_t wri
         return;
     }
     pump->total_written += written_bytes;
+#ifdef DEBUG_PUMP
     if (((pump->total_written - written_bytes) / 100000) != (pump->total_written / 100000)) {
         fprintf(stderr, "Written %lld KBytes\n", (long long)((pump->total_written / 100000) * 100));
     }
+#endif
 }
 
 static inline void reset_pump_buffer(struct qemu_pump *pump)
@@ -57,6 +61,8 @@ int pump_data(struct qemu_pump *pump)
 {
     int in = pump->in;
     int out = pump->out;
+    FILE *fin = pump->fin;
+    FILE *fout = pump->fout;
     char *buf = pump->buf;
     int r;
 
@@ -72,7 +78,13 @@ int pump_data(struct qemu_pump *pump)
                 reset_pump_buffer(pump);
                 break;
             }
-            written_bytes = write(out, buf + pump->buffer_shift, bytes_to_write);
+            if (fout) {
+                written_bytes = fwrite(buf + pump->buffer_shift, 1, bytes_to_write, fout);
+                fflush(fout);
+            } else {
+                written_bytes = write(out, buf + pump->buffer_shift, bytes_to_write);
+            }
+
             if (written_bytes == 0) {
                 goto out;
             }
@@ -88,7 +100,13 @@ int pump_data(struct qemu_pump *pump)
             pump->buffer_shift += written_bytes;
         }
         while (true) {
-            ssize_t read_bytes = read(in, buf, 1024);
+            ssize_t read_bytes;
+
+            if (fin)
+                read_bytes = fread(buf, 1, 1024, fin);
+            else
+                read_bytes = read(in, buf, 1024);
+
             if (read_bytes == 0) {
                 goto out;
             }
@@ -111,9 +129,27 @@ int pump_data(struct qemu_pump *pump)
     return 0;
 
  error:
+    if (fout)
+        fclose(fout);
+    if (fin)
+        fclose(fin);
     close(out);
     close(in);
     pump->out = 0;
     pump->in = 0;
+    pump->fout = 0;
+    pump->fin = 0;
+    return r;
+}
+
+int pump_flush(struct qemu_pump *pump)
+{
+    FILE *fout = pump->fout;
+    int r = 0;
+
+    if (fout) {
+        r = fflush(fout);
+    }
+
     return r;
 }
