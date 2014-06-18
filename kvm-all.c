@@ -83,7 +83,6 @@ struct KVMCPUState
     FILE *replay_mmio_file;
     int record_pump_count;
     int replay_pump_count;
-    int pump_counter;
 };
 
 struct KVMState
@@ -264,10 +263,10 @@ static void open_debug_stream(KVMState *s,
         int fd;
         sprintf(filename, "%s/rkvm-debug-cpu%d", s->rkvm_debug_directory, cpu_index);
         fd = open(filename,
-                  O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd > 0) {
             init_pump(&kvm_cpu_state->debug_pump,
-                      rkvm_debug_fd, NULL, fd, fdopen(fd, "w"));
+                      rkvm_debug_fd, false, fd, true);
         } else {
             perror("Could not open debug file");
             close(rkvm_debug_fd);
@@ -285,7 +284,7 @@ static void open_record_streams(KVMState *s,
     int fd;
     sprintf(filename, "%s/rkvm-io-cpu%d", s->record_directory, cpu_index);
     fd = open(filename,
-              O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+              O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         perror("Could not open record file");
         exit(1);
@@ -293,7 +292,7 @@ static void open_record_streams(KVMState *s,
     kvm_cpu_state->record_io_file = fdopen(fd, "w");
     sprintf(filename, "%s/rkvm-mmio-cpu%d", s->record_directory, cpu_index);
     fd = open(filename,
-              O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+              O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         perror("Could not open record file");
         exit(1);
@@ -303,13 +302,13 @@ static void open_record_streams(KVMState *s,
         sprintf(filename, "%s/rkvm-cpu%d-%s", s->record_directory,
                 cpu_index, stream_fds->name[i]);
         fd = open(filename,
-                  O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             perror("Could not open record file");
             exit(1);
         }
         init_pump(&kvm_cpu_state->record_pump[i],
-                  stream_fds->fd[i], NULL, fd, fdopen(fd, "w"));
+                  stream_fds->fd[i], false, fd, true);
     }
     free(filename);
     kvm_cpu_state->record_pump_count = stream_fds->count;
@@ -349,7 +348,7 @@ static void open_replay_streams(KVMState *s,
             exit(1);
         }
         init_pump(&kvm_cpu_state->replay_pump[i],
-                  fd, fdopen(fd, "r"), stream_fds->fd[i], NULL);
+                  fd, true, stream_fds->fd[i], false);
     }
     free(filename);
     kvm_cpu_state->replay_pump_count = stream_fds->count;
@@ -1892,18 +1891,6 @@ void kvm_cpu_synchronize_post_init(CPUState *cpu)
     cpu->kvm_vcpu_dirty = false;
 }
 
-static void flush_streams(struct KVMCPUState *kvm_cpu_state)
-{
-    int i;
-    pump_flush(&kvm_cpu_state->debug_pump);
-    for (i = 0; i < kvm_cpu_state->record_pump_count; ++i) {
-        pump_flush(&kvm_cpu_state->record_pump[i]);
-    }
-    for (i = 0; i < kvm_cpu_state->replay_pump_count; ++i) {
-        pump_flush(&kvm_cpu_state->replay_pump[i]);
-    }
-}
-
 static void pump_streams(struct KVMCPUState *kvm_cpu_state)
 {
     int i;
@@ -1913,10 +1900,6 @@ static void pump_streams(struct KVMCPUState *kvm_cpu_state)
     }
     for (i = 0; i < kvm_cpu_state->replay_pump_count; ++i) {
         pump_data(&kvm_cpu_state->replay_pump[i]);
-    }
-    if (++kvm_cpu_state->pump_counter == 1000) {
-        flush_streams(kvm_cpu_state);
-        kvm_cpu_state->pump_counter = 0;
     }
 }
 
@@ -1971,7 +1954,7 @@ int kvm_cpu_exec(CPUState *cpu)
                         (int)run->rkvm_vcpu_debug_data.cnt / 1000);
                 unlink(dumpfile);
                 fd = open(dumpfile,
-                          O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                          O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
                 pkvm_xfer = NULL;
                 qemu_get_ram_ptr_ok = 1;
                 address_space_read(&address_space_memory, 0, buf, 0x100000);
@@ -2500,7 +2483,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
                 ++cnt);
         unlink(dumpfile);
         fd = open(dumpfile,
-                  O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
         pkvm_xfer = NULL;
         qemu_get_ram_ptr_ok = 1;
         address_space_read(&address_space_memory, 0, buf, 0x100000);
@@ -2559,7 +2542,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
                 ++cnt);
         unlink(dumpfile);
         fd = open(dumpfile,
-                  O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
         pkvm_xfer = NULL;
         qemu_get_ram_ptr_ok = 1;
         address_space_read(&address_space_memory, 0, buf, 0x100000);

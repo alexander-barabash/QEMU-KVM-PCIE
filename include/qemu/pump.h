@@ -28,24 +28,26 @@
 struct qemu_pump {
     int in;
     int out;
-    FILE *fin;
-    FILE *fout;
+    bool do_mmap_in;
+    bool do_mmap_out;
+    uint64_t in_pointer_position;
+    void *in_pointer;
+    uint64_t in_segment_size;
+    uint64_t out_pointer_position;
+    void *out_pointer;
+    uint64_t out_segment_size;
     char buf[1024];
     ssize_t buffer_shift;
     ssize_t buffer_size;
-    ssize_t total_read;
-    ssize_t total_written;
+    uint64_t total_read;
+    uint64_t total_written;
 };
 
-static inline void init_pump(struct qemu_pump *pump, int in, FILE *fin, int out, FILE *fout)
-{
-    pump->in = in;
-    pump->out = out;
-    pump->fin = fin;
-    pump->fout = fout;
-}
-
+void init_pump(struct qemu_pump *pump,
+               int in,
+               bool do_mmap_in,
+               int out,
+               bool do_mmap_out);
 int pump_data(struct qemu_pump *pump);
-int pump_flush(struct qemu_pump *pump);
 
 #endif /* __QEMU_PUMP_H__ */
