@@ -77,10 +77,12 @@ struct KVMCPUState
     struct qemu_pump record_pump[32];
     struct qemu_pump replay_pump[32];
     int rkvm_debug_fd;
-    FILE *record_io_file;
-    FILE *record_mmio_file;
-    FILE *replay_io_file;
-    FILE *replay_mmio_file;
+    bool record_execution;
+    bool replay_execution;
+    struct qemu_mapped_file record_io_file;
+    struct qemu_mapped_file record_mmio_file;
+    struct qemu_mapped_file replay_io_file;
+    struct qemu_mapped_file replay_mmio_file;
     int record_pump_count;
     int replay_pump_count;
 };
@@ -265,8 +267,8 @@ static void open_debug_stream(KVMState *s,
         fd = open(filename,
                   O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd > 0) {
-            init_pump(&kvm_cpu_state->debug_pump,
-                      rkvm_debug_fd, false, fd, true);
+            qemu_init_pump(&kvm_cpu_state->debug_pump,
+                           rkvm_debug_fd, false, fd, true);
         } else {
             perror("Could not open debug file");
             close(rkvm_debug_fd);
@@ -289,7 +291,7 @@ static void open_record_streams(KVMState *s,
         perror("Could not open record file");
         exit(1);
     }
-    kvm_cpu_state->record_io_file = fdopen(fd, "w");
+    qemu_init_mapped_file(&kvm_cpu_state->record_io_file, fd);
     sprintf(filename, "%s/rkvm-mmio-cpu%d", s->record_directory, cpu_index);
     fd = open(filename,
               O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
@@ -297,7 +299,7 @@ static void open_record_streams(KVMState *s,
         perror("Could not open record file");
         exit(1);
     }
-    kvm_cpu_state->record_mmio_file = fdopen(fd, "w");
+    qemu_init_mapped_file(&kvm_cpu_state->record_mmio_file, fd);
     for (i = 0; i < stream_fds->count; ++i) {
         sprintf(filename, "%s/rkvm-cpu%d-%s", s->record_directory,
                 cpu_index, stream_fds->name[i]);
@@ -307,11 +309,12 @@ static void open_record_streams(KVMState *s,
             perror("Could not open record file");
             exit(1);
         }
-        init_pump(&kvm_cpu_state->record_pump[i],
-                  stream_fds->fd[i], false, fd, true);
+        qemu_init_pump(&kvm_cpu_state->record_pump[i],
+                       stream_fds->fd[i], false, fd, true);
     }
     free(filename);
     kvm_cpu_state->record_pump_count = stream_fds->count;
+    kvm_cpu_state->record_execution = true;
 }
 
 static void open_replay_streams(KVMState *s,
@@ -329,7 +332,7 @@ static void open_replay_streams(KVMState *s,
         perror("Could not open replay file");
         exit(1);
     }
-    kvm_cpu_state->replay_io_file = fdopen(fd, "r");
+    qemu_init_mapped_file(&kvm_cpu_state->replay_io_file, fd);
     sprintf(filename, "%s/rkvm-mmio-cpu%d", s->replay_directory, cpu_index);
     fd = open(filename, O_RDONLY);
     if (fd < 0) {
@@ -337,7 +340,7 @@ static void open_replay_streams(KVMState *s,
         perror("Could not open replay file");
         exit(1);
     }
-    kvm_cpu_state->replay_mmio_file = fdopen(fd, "r");
+    qemu_init_mapped_file(&kvm_cpu_state->replay_mmio_file, fd);
     for (i = 0; i < stream_fds->count; ++i) {
         sprintf(filename, "%s/rkvm-cpu%d-%s", s->replay_directory,
                 cpu_index, stream_fds->name[i]);
@@ -347,11 +350,12 @@ static void open_replay_streams(KVMState *s,
             perror("Could not open replay file");
             exit(1);
         }
-        init_pump(&kvm_cpu_state->replay_pump[i],
-                  fd, true, stream_fds->fd[i], false);
+        qemu_init_pump(&kvm_cpu_state->replay_pump[i],
+                       fd, true, stream_fds->fd[i], false);
     }
     free(filename);
     kvm_cpu_state->replay_pump_count = stream_fds->count;
+    kvm_cpu_state->replay_execution = true;
 }
 
 int kvm_init_vcpu(CPUState *cpu)
@@ -2009,14 +2013,12 @@ int kvm_cpu_exec(CPUState *cpu)
         switch (run->exit_reason) {
         case KVM_EXIT_IO: {
             struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
-            FILE *replay_io_file = kvm_cpu_state->replay_io_file;
-            FILE *record_io_file = kvm_cpu_state->record_io_file;
             uint8_t *data = (uint8_t *)run + run->io.data_offset;
             int direction = run->io.direction;
             int size = run->io.size;
             uint32_t count = run->io.count;
             DPRINTF("handle_io\n");
-            if (!replay_io_file || !ignore_port_in_replay(run->io.port)) {
+            if (!kvm_cpu_state->replay_execution || !ignore_port_in_replay(run->io.port)) {
                 kvm_handle_io(run->io.port,
                               data,
                               direction,
@@ -2024,11 +2026,11 @@ int kvm_cpu_exec(CPUState *cpu)
                               count);
             }
             if (direction != KVM_EXIT_IO_OUT) {
-                if (replay_io_file) {
-                    fread(data, 1, size * count, replay_io_file);
+                if (kvm_cpu_state->replay_execution) {
+                    qemu_mapped_read(data, size * count, &kvm_cpu_state->replay_io_file);
                 }
-                if (record_io_file) {
-                    fwrite(data, 1, size * count, record_io_file);
+                if (kvm_cpu_state->record_execution) {
+                    qemu_mapped_write(data, size * count, &kvm_cpu_state->record_io_file);
                 }
             }
             ret = 0;
@@ -2036,8 +2038,6 @@ int kvm_cpu_exec(CPUState *cpu)
         }
         case KVM_EXIT_MMIO: {
             struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
-            FILE *replay_mmio_file = kvm_cpu_state->replay_mmio_file;
-            FILE *record_mmio_file = kvm_cpu_state->record_mmio_file;
             void *data = run->mmio.data;
             uint32_t len = run->mmio.len;
             bool is_write = (run->mmio.is_write != 0);
@@ -2049,11 +2049,11 @@ int kvm_cpu_exec(CPUState *cpu)
                                    is_write);
             if (!is_internal) {
                 if (!is_write) {
-                    if (replay_mmio_file) {
-                        fread(data, 1, len, replay_mmio_file);
+                    if (kvm_cpu_state->replay_execution) {
+                        qemu_mapped_read(data, len, &kvm_cpu_state->replay_mmio_file);
                     }
-                    if (kvm_cpu_state->record_mmio_file) {
-                        fwrite(data, 1, len, record_mmio_file);
+                    if (kvm_cpu_state->record_execution) {
+                        qemu_mapped_write(data, len, &kvm_cpu_state->record_mmio_file);
                     }
                 }
             }
