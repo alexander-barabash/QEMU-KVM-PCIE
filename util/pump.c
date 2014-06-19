@@ -173,7 +173,7 @@ ssize_t qemu_mapped_write(const void *ptr, size_t size,
     size_t copied = 0;
     do {
         ssize_t result = do_qemu_mapped_write(ptr, size, file);
-        if (result < 0) {
+        if (result <= 0) {
             if (copied > 0) {
                 return copied;
             } else {
@@ -240,7 +240,7 @@ ssize_t qemu_mapped_read(void *ptr, size_t size, struct qemu_mapped_file *file)
     size_t copied = 0;
     do {
         ssize_t result = do_qemu_mapped_read(ptr, size, file);
-        if (result < 0) {
+        if (result <= 0) {
             if (copied > 0) {
                 return copied;
             } else {
