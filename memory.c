@@ -792,6 +792,7 @@ void memory_region_transaction_commit(void)
     assert(memory_region_transaction_depth);
     --memory_region_transaction_depth;
     if (!memory_region_transaction_depth && memory_region_update_pending) {
+        fprintf(stderr, "updating memory topology\n");
         memory_region_update_pending = false;
         MEMORY_LISTENER_CALL_GLOBAL(begin, Forward);
 

@@ -1946,7 +1946,9 @@ void memory_region_xfer_to_ram(MemoryRegion *mr, hwaddr addr,
 {
     uint8_t *ptr;
     addr += memory_region_get_ram_addr(mr);
+    qemu_get_ram_ptr_ok = 1;
     ptr = qemu_get_ram_ptr(addr);
+    qemu_get_ram_ptr_ok = 0;
     if ((pkvm_xfer == NULL) ||
         (pkvm_xfer(kvm_xfer_data, ptr, buf, len) != 0)) {
         memcpy(ptr, buf, len);
@@ -1959,7 +1961,9 @@ void memory_region_xfer_from_ram(MemoryRegion *mr, uint8_t *buf,
 {
     uint8_t *ptr;
     addr += memory_region_get_ram_addr(mr);
+    qemu_get_ram_ptr_ok = 1;
     ptr = qemu_get_ram_ptr(addr);
+    qemu_get_ram_ptr_ok = 0;
     if ((pkvm_xfer == NULL) ||
         (pkvm_xfer(kvm_xfer_data, buf, ptr, len) != 0)) {
         memcpy(buf, ptr, len);

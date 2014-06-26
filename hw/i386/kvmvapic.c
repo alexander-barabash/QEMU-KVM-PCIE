@@ -584,7 +584,6 @@ static void vapic_map_rom_writable(VAPICROMState *s)
     MemoryRegionSection section;
     MemoryRegion *as;
     size_t rom_size;
-    uint8_t *ram;
 
     as = sysbus_address_space(&s->busdev);
 
@@ -597,9 +596,12 @@ static void vapic_map_rom_writable(VAPICROMState *s)
     section = memory_region_find(as, 0, 1);
 
     /* read ROM size from RAM region */
-    ram = memory_region_get_ram_ptr(section.mr);
-    rom_size = ram[rom_paddr + 2] * ROM_BLOCK_SIZE;
-    s->rom_size = rom_size;
+    {
+        uint8_t *ram;
+        ram = memory_region_get_ram_ptr(section.mr);
+        rom_size = ram[rom_paddr + 2] * ROM_BLOCK_SIZE;
+        s->rom_size = rom_size;
+    }
 
     /* We need to round to avoid creating subpages
      * from which we cannot run code. */

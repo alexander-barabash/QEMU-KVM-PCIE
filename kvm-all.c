@@ -2027,7 +2027,14 @@ int kvm_cpu_exec(CPUState *cpu)
             }
             if (direction != KVM_EXIT_IO_OUT) {
                 if (kvm_cpu_state->replay_execution) {
+                    //uint8_t buffer[size * count];
+                    //memcpy(buffer, data, size * count);
                     qemu_mapped_read(data, size * count, &kvm_cpu_state->replay_io_file);
+                    /*
+                    if (memcmp(buffer, data, size * count)) {
+                        fprintf(stderr, "Changed I/O on port %d\n", run->io.port);
+                    }
+                    */
                 }
                 if (kvm_cpu_state->record_execution) {
                     qemu_mapped_write(data, size * count, &kvm_cpu_state->record_io_file);
@@ -2041,7 +2048,7 @@ int kvm_cpu_exec(CPUState *cpu)
             void *data = run->mmio.data;
             uint32_t len = run->mmio.len;
             bool is_write = (run->mmio.is_write != 0);
-            bool is_internal = (run->mmio.is_internal != 0);
+            bool is_internal = false; // (run->mmio.is_internal != 0);
             DPRINTF("handle_mmio\n");
             cpu_physical_memory_rw(run->mmio.phys_addr,
                                    data,
@@ -2050,7 +2057,15 @@ int kvm_cpu_exec(CPUState *cpu)
             if (!is_internal) {
                 if (!is_write) {
                     if (kvm_cpu_state->replay_execution) {
+                        //uint8_t buffer[len];
+                        //memcpy(buffer, data, len);
                         qemu_mapped_read(data, len, &kvm_cpu_state->replay_mmio_file);
+                        /*
+                        if (memcmp(buffer, data, len)) {
+                            fprintf(stderr, "Changed MMIO at address 0x%llx\n",
+                                    (long long)run->mmio.phys_addr);
+                        }
+                        */
                     }
                     if (kvm_cpu_state->record_execution) {
                         qemu_mapped_write(data, len, &kvm_cpu_state->record_mmio_file);
@@ -2083,6 +2098,8 @@ int kvm_cpu_exec(CPUState *cpu)
             break;
         }
     } while (ret == 0);
+
+    pump_streams(cpu->kvm_cpu_state);
 
     if (ret < 0) {
         cpu_dump_state(cpu, stderr, fprintf, CPU_DUMP_CODE);

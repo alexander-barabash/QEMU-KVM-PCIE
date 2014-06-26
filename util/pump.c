@@ -170,23 +170,20 @@ static ssize_t do_qemu_mapped_write(const void *ptr, size_t size,
 ssize_t qemu_mapped_write(const void *ptr, size_t size,
                           struct qemu_mapped_file *file)
 {
-    size_t copied = 0;
-    do {
+    ssize_t copied = 0;
+    while (size > 0) {
         ssize_t result = do_qemu_mapped_write(ptr, size, file);
         if (result <= 0) {
-            if (copied > 0) {
-                return copied;
-            } else {
-                return result;
+            if (copied == 0) {
+                copied = result;
             }
-        }
-        if (result == size) {
-            return copied + size;
+            break;
         }
         size -= result;
         copied += result;
         ptr += result;
-    } while (true);
+    }
+    return copied;
 }
 
 static ssize_t do_qemu_mapped_read(void *ptr, size_t size,
@@ -237,21 +234,18 @@ static ssize_t do_qemu_mapped_read(void *ptr, size_t size,
 
 ssize_t qemu_mapped_read(void *ptr, size_t size, struct qemu_mapped_file *file)
 {
-    size_t copied = 0;
-    do {
+    ssize_t copied = 0;
+    while (size > 0) {
         ssize_t result = do_qemu_mapped_read(ptr, size, file);
         if (result <= 0) {
-            if (copied > 0) {
-                return copied;
-            } else {
-                return result;
+            if (copied == 0) {
+                copied = result;
             }
-        }
-        if (result == size) {
-            return copied + size;
+            break;
         }
         size -= result;
         copied += result;
         ptr += result;
-    } while (true);
+    }
+    return copied;
 }

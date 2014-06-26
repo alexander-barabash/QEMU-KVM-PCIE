@@ -88,7 +88,7 @@ typedef void (* vga_update_retrace_info_fn)(struct VGACommonState *s);
 
 typedef struct VGACommonState {
     MemoryRegion *legacy_address_space;
-    uint8_t *vram_ptr;
+    uint8_t *vram_ptrX;
     MemoryRegion vram;
     MemoryRegion vram_vbe;
     uint32_t vram_size;
@@ -168,6 +168,14 @@ typedef struct VGACommonState {
     union vga_retrace retrace_info;
     uint8_t is_vbe_vmstate;
 } VGACommonState;
+
+void vram_accessed(void);
+#define ACCESS_VRAM(s) ((vram_accessed(), s)->vram_ptrX)
+#define INIT_VRAM(s)                                                    \
+    do {                                                                \
+        VGACommonState *vga_state = (s);                                \
+        vga_state->vram_ptrX = memory_region_get_ram_ptr(&vga_state->vram); \
+    } while (0)
 
 static inline int c6_to_8(int v)
 {

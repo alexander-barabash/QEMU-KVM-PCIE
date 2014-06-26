@@ -697,7 +697,7 @@ void vbe_ioport_write_data(void *opaque, uint32_t addr, uint32_t val)
 
                 /* clear the screen (should be done in BIOS) */
                 if (!(val & VBE_DISPI_NOCLEARMEM)) {
-                    memset(s->vram_ptr, 0,
+                    memset(ACCESS_VRAM(s), 0,
                            s->vbe_regs[VBE_DISPI_INDEX_YRES] * s->vbe_line_offset);
                 }
 
@@ -814,14 +814,14 @@ uint32_t vga_mem_readb(VGACommonState *s, hwaddr addr)
 
     if (s->sr[VGA_SEQ_MEMORY_MODE] & VGA_SR04_CHN_4M) {
         /* chain 4 mode : simplest access */
-        ret = s->vram_ptr[addr];
+        ret = ACCESS_VRAM(s)[addr];
     } else if (s->gr[VGA_GFX_MODE] & 0x10) {
         /* odd/even mode (aka text mode mapping) */
         plane = (s->gr[VGA_GFX_PLANE_READ] & 2) | (addr & 1);
-        ret = s->vram_ptr[((addr & ~1) << 1) | plane];
+        ret = ACCESS_VRAM(s)[((addr & ~1) << 1) | plane];
     } else {
         /* standard VGA latched access */
-        s->latch = ((uint32_t *)s->vram_ptr)[addr];
+        s->latch = ((uint32_t *)ACCESS_VRAM(s))[addr];
 
         if (!(s->gr[VGA_GFX_MODE] & 0x08)) {
             /* read mode 0 */
@@ -877,7 +877,7 @@ void vga_mem_writeb(VGACommonState *s, hwaddr addr, uint32_t val)
         plane = addr & 3;
         mask = (1 << plane);
         if (s->sr[VGA_SEQ_PLANE_WRITE] & mask) {
-            s->vram_ptr[addr] = val;
+            ACCESS_VRAM(s)[addr] = val;
 #ifdef DEBUG_VGA_MEM
             printf("vga: chain4: [0x" TARGET_FMT_plx "]\n", addr);
 #endif
@@ -890,7 +890,7 @@ void vga_mem_writeb(VGACommonState *s, hwaddr addr, uint32_t val)
         mask = (1 << plane);
         if (s->sr[VGA_SEQ_PLANE_WRITE] & mask) {
             addr = ((addr & ~1) << 1) | plane;
-            s->vram_ptr[addr] = val;
+            ACCESS_VRAM(s)[addr] = val;
 #ifdef DEBUG_VGA_MEM
             printf("vga: odd/even: [0x" TARGET_FMT_plx "]\n", addr);
 #endif
@@ -963,8 +963,8 @@ void vga_mem_writeb(VGACommonState *s, hwaddr addr, uint32_t val)
         mask = s->sr[VGA_SEQ_PLANE_WRITE];
         s->plane_updated |= mask; /* only used to detect font change */
         write_mask = mask16[mask];
-        ((uint32_t *)s->vram_ptr)[addr] =
-            (((uint32_t *)s->vram_ptr)[addr] & ~write_mask) |
+        ((uint32_t *)ACCESS_VRAM(s))[addr] =
+            (((uint32_t *)ACCESS_VRAM(s))[addr] & ~write_mask) |
             (val & write_mask);
 #ifdef DEBUG_VGA_MEM
         printf("vga: latch: [0x" TARGET_FMT_plx "] mask=0x%08x val=0x%08x\n",
@@ -1313,10 +1313,10 @@ static void vga_draw_text(VGACommonState *s, int full_update)
         s->font_offsets[0] = offset;
         full_update = 1;
     }
-    font_base[0] = s->vram_ptr + offset;
+    font_base[0] = ACCESS_VRAM(s) + offset;
 
     offset = (((v >> 5) & 1) | ((v >> 1) & 6)) * 8192 * 4 + 2;
-    font_base[1] = s->vram_ptr + offset;
+    font_base[1] = ACCESS_VRAM(s) + offset;
     if (offset != s->font_offsets[1]) {
         s->font_offsets[1] = offset;
         full_update = 1;
@@ -1384,7 +1384,7 @@ static void vga_draw_text(VGACommonState *s, int full_update)
         s->cursor_start = s->cr[VGA_CRTC_CURSOR_START];
         s->cursor_end = s->cr[VGA_CRTC_CURSOR_END];
     }
-    cursor_ptr = s->vram_ptr + (s->start_addr + cursor_offset) * 4;
+    cursor_ptr = ACCESS_VRAM(s) + (s->start_addr + cursor_offset) * 4;
     if (now >= s->cursor_blink_time) {
         s->cursor_blink_time = now + VGA_TEXT_CURSOR_PERIOD_MS / 2;
         s->cursor_visible_phase = !s->cursor_visible_phase;
@@ -1404,7 +1404,7 @@ static void vga_draw_text(VGACommonState *s, int full_update)
     offset = s->start_addr * 4;
     for(cy = 0; cy < height; cy++) {
         d1 = dest;
-        src = s->vram_ptr + offset;
+        src = ACCESS_VRAM(s) + offset;
         cx_min = width;
         cx_max = -1;
         for(cx = 0; cx < width; cx++) {
@@ -1695,7 +1695,7 @@ static void vga_draw_graphic(VGACommonState *s, int full_update)
         if (depth == 32 || (depth == 16 && !byteswap)) {
             surface = qemu_create_displaysurface_from(disp_width,
                     height, depth, s->line_offset,
-                    s->vram_ptr + (s->start_addr * 4), byteswap);
+                    ACCESS_VRAM(s) + (s->start_addr * 4), byteswap);
             dpy_gfx_replace_surface(s->con, surface);
         } else {
             qemu_console_resize(s->con, disp_width, height);
@@ -1709,12 +1709,12 @@ static void vga_draw_graphic(VGACommonState *s, int full_update)
         s->last_depth = depth;
         full_update = 1;
     } else if (is_buffer_shared(surface) &&
-               (full_update || surface_data(surface) != s->vram_ptr
+               (full_update || surface_data(surface) != ACCESS_VRAM(s)
                 + (s->start_addr * 4))) {
         DisplaySurface *surface;
         surface = qemu_create_displaysurface_from(disp_width,
                 height, depth, s->line_offset,
-                s->vram_ptr + (s->start_addr * 4), byteswap);
+                ACCESS_VRAM(s) + (s->start_addr * 4), byteswap);
         dpy_gfx_replace_surface(s->con, surface);
     }
 
@@ -1815,7 +1815,7 @@ static void vga_draw_graphic(VGACommonState *s, int full_update)
             if (page1 > page_max)
                 page_max = page1;
             if (!(is_buffer_shared(surface))) {
-                vga_draw_line(s, d, s->vram_ptr + addr, width);
+                vga_draw_line(s, d, ACCESS_VRAM(s) + addr, width);
                 if (s->cursor_draw_line)
                     s->cursor_draw_line(s, d, y);
             }
@@ -2106,7 +2106,7 @@ static void vga_update_text(void *opaque, console_ch_t *chardata)
             s->cursor_end = s->cr[VGA_CRTC_CURSOR_END];
         }
 
-        src = (uint32_t *) s->vram_ptr + s->start_addr;
+        src = (uint32_t *) ACCESS_VRAM(s) + s->start_addr;
         dst = chardata;
 
         if (full_update) {
@@ -2296,7 +2296,7 @@ void vga_common_init(VGACommonState *s, Object *obj)
     memory_region_init_ram(&s->vram, obj, "vga.vram", s->vram_size);
     vmstate_register_ram_global(&s->vram);
     xen_register_framebuffer(&s->vram);
-    s->vram_ptr = memory_region_get_ram_ptr(&s->vram);
+    INIT_VRAM(s);
     s->get_bpp = vga_get_bpp;
     s->get_offsets = vga_get_offsets;
     s->get_resolution = vga_get_resolution;
@@ -2394,3 +2394,9 @@ void vga_init_vbe(VGACommonState *s, Object *obj, MemoryRegion *system_memory)
                                 &s->vram_vbe);
     s->vbe_mapped = 1;
 }
+
+int vram_access_counter;
+void vram_accessed(void) {
+    vram_access_counter++;
+}
+
