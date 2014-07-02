@@ -134,6 +134,8 @@ struct KVMState
     struct KVMCPUState dma_cpu;
 };
 
+static void pump_streams(struct KVMCPUState *kvm_cpu_state);
+
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
 bool kvm_async_interrupts_allowed;
@@ -1840,6 +1842,29 @@ static int kvm_handle_internal_error(CPUState *cpu, struct kvm_run *run)
     return -1;
 }
 
+static void flush_coalesced_lock(KVMState *s)
+{
+#if 0
+    __u32 lock = 1;
+    int r;
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
+        return;
+    do {
+        r = kvm_vm_ioctl(s, RKVM_FLUSH_COALESCED, &lock);
+    } while (r == -EAGAIN);
+#endif
+}
+
+static void flush_coalesced_unlock(KVMState *s)
+{
+#if 0
+    __u32 lock = 0;
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
+        return;
+    kvm_vm_ioctl(s, RKVM_FLUSH_COALESCED, &lock);
+#endif
+}
+
 void kvm_flush_coalesced_mmio_buffer(void)
 {
     KVMState *s = kvm_state;
@@ -1849,18 +1874,20 @@ void kvm_flush_coalesced_mmio_buffer(void)
     }
 
     s->coalesced_flush_in_progress = true;
-
+ 
     if (s->coalesced_mmio_ring) {
         struct kvm_coalesced_mmio_ring *ring = s->coalesced_mmio_ring;
+        flush_coalesced_lock(s);
         while (ring->first != ring->last) {
             struct kvm_coalesced_mmio *ent;
-
+            
             ent = &ring->coalesced_mmio[ring->first];
 
             cpu_physical_memory_write(ent->phys_addr, ent->data, ent->len);
             smp_wmb();
             ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
         }
+        flush_coalesced_unlock(s);
     }
 
     s->coalesced_flush_in_progress = false;
@@ -2484,6 +2511,9 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
     struct rkvm_xfer rkvm_xfer;
 
     if (len < 0)
+        return -1;
+
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
         return -1;
 
     fprintf(stderr, "kvm_xfer of size %d\n", len);
