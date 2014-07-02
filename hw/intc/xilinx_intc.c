@@ -37,9 +37,13 @@
 #define R_MER       7
 #define R_MAX       8
 
+#define TYPE_XILINX_INTC "xlnx.xps-intc"
+#define XILINX_INTC(obj) OBJECT_CHECK(struct xlx_pic, (obj), TYPE_XILINX_INTC)
+
 struct xlx_pic
 {
-    SysBusDevice busdev;
+    SysBusDevice parent_obj;
+
     MemoryRegion mmio;
     qemu_irq parent_irq;
 
@@ -67,8 +71,9 @@ static void update_irq(struct xlx_pic *p)
 
     /* Update the vector register.  */
     for (i = 0; i < 32; i++) {
-        if (p->regs[R_IPR] & (1 << i))
+        if (p->regs[R_IPR] & (1U << i)) {
             break;
+        }
     }
     if (i == 32)
         i = ~0;
@@ -116,6 +121,9 @@ pic_write(void *opaque, hwaddr addr,
         case R_CIE:
             p->regs[R_IER] &= ~value; /* Atomic clear ie.  */
             break;
+        case R_MER:
+            p->regs[R_MER] = value & 0x3;
+            break;
         case R_ISR:
             if ((p->regs[R_MER] & 2)) {
                 break;
@@ -153,16 +161,16 @@ static void irq_handler(void *opaque, int irq, int level)
     update_irq(p);
 }
 
-static int xilinx_intc_init(SysBusDevice *dev)
+static void xilinx_intc_init(Object *obj)
 {
-    struct xlx_pic *p = FROM_SYSBUS(typeof (*p), dev);
+    struct xlx_pic *p = XILINX_INTC(obj);
 
-    qdev_init_gpio_in(&dev->qdev, irq_handler, 32);
-    sysbus_init_irq(dev, &p->parent_irq);
+    qdev_init_gpio_in(DEVICE(obj), irq_handler, 32);
+    sysbus_init_irq(SYS_BUS_DEVICE(obj), &p->parent_irq);
 
-    memory_region_init_io(&p->mmio, &pic_ops, p, "xlnx.xps-intc", R_MAX * 4);
-    sysbus_init_mmio(dev, &p->mmio);
-    return 0;
+    memory_region_init_io(&p->mmio, obj, &pic_ops, p, "xlnx.xps-intc",
+                          R_MAX * 4);
+    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &p->mmio);
 }
 
 static Property xilinx_intc_properties[] = {
@@ -173,16 +181,15 @@ static Property xilinx_intc_properties[] = {
 static void xilinx_intc_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = xilinx_intc_init;
     dc->props = xilinx_intc_properties;
 }
 
 static const TypeInfo xilinx_intc_info = {
-    .name          = "xlnx.xps-intc",
+    .name          = TYPE_XILINX_INTC,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(struct xlx_pic),
+    .instance_init = xilinx_intc_init,
     .class_init    = xilinx_intc_class_init,
 };
 

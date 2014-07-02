@@ -43,7 +43,7 @@ unsigned long reserved_va;
 #endif
 
 static const char *interp_prefix = CONFIG_QEMU_INTERP_PREFIX;
-const char *qemu_uname_release = CONFIG_UNAME_RELEASE;
+const char *qemu_uname_release;
 extern char **environ;
 enum BSDType bsd_type;
 
@@ -92,7 +92,7 @@ void fork_start(void)
 void fork_end(int child)
 {
     if (child) {
-        gdbserver_fork(thread_env);
+        gdbserver_fork((CPUArchState *)thread_cpu->env_ptr);
     }
 }
 
@@ -643,7 +643,7 @@ void cpu_loop(CPUSPARCState *env)
             {
                 int sig;
 
-                sig = gdb_handlesig (env, TARGET_SIGTRAP);
+                sig = gdb_handlesig(cs, TARGET_SIGTRAP);
 #if 0
                 if (sig)
                   {
@@ -713,7 +713,7 @@ static void usage(void)
     exit(1);
 }
 
-THREAD CPUArchState *thread_env;
+THREAD CPUState *thread_cpu;
 
 /* Assumes contents are already zeroed.  */
 void init_task_state(TaskState *ts)
@@ -738,6 +738,7 @@ int main(int argc, char **argv)
     struct image_info info1, *info = &info1;
     TaskState ts1, *ts = &ts1;
     CPUArchState *env;
+    CPUState *cpu;
     int optind;
     const char *r;
     int gdbstub_port = 0;
@@ -912,10 +913,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
+    cpu = ENV_GET_CPU(env);
 #if defined(TARGET_SPARC) || defined(TARGET_PPC)
-    cpu_reset(ENV_GET_CPU(env));
+    cpu_reset(cpu);
 #endif
-    thread_env = env;
+    thread_cpu = cpu;
 
     if (getenv("QEMU_STRACE")) {
         do_strace = 1;
@@ -998,13 +1000,11 @@ int main(int argc, char **argv)
     memset(ts, 0, sizeof(TaskState));
     init_task_state(ts);
     ts->info = info;
-    env->opaque = ts;
+    cpu->opaque = ts;
 
 #if defined(TARGET_I386)
-    cpu_x86_set_cpl(env, 3);
-
     env->cr[0] = CR0_PG_MASK | CR0_WP_MASK | CR0_PE_MASK;
-    env->hflags |= HF_PE_MASK;
+    env->hflags |= HF_PE_MASK | HF_CPL_MASK;
     if (env->features[FEAT_1_EDX] & CPUID_SSE) {
         env->cr[4] |= CR4_OSFXSR_MASK;
         env->hflags |= HF_OSFXSR_MASK;
@@ -1134,7 +1134,7 @@ int main(int argc, char **argv)
 
     if (gdbstub_port) {
         gdbserver_start (gdbstub_port);
-        gdb_handlesig(env, 0);
+        gdb_handlesig(cpu, 0);
     }
     cpu_loop(env);
     /* never exits */

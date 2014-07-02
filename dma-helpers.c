@@ -11,6 +11,7 @@
 #include "trace.h"
 #include "qemu/range.h"
 #include "qemu/thread.h"
+#include "qemu/main-loop.h"
 
 /* #define DEBUG_IOMMU */
 
@@ -34,13 +35,16 @@ int dma_memory_set(AddressSpace *as, dma_addr_t addr, uint8_t c, dma_addr_t len)
     return error;
 }
 
-void qemu_sglist_init(QEMUSGList *qsg, int alloc_hint, AddressSpace *as)
+void qemu_sglist_init(QEMUSGList *qsg, DeviceState *dev, int alloc_hint,
+                      AddressSpace *as)
 {
     qsg->sg = g_malloc(alloc_hint * sizeof(ScatterGatherEntry));
     qsg->nsg = 0;
     qsg->nalloc = alloc_hint;
     qsg->size = 0;
     qsg->as = as;
+    qsg->dev = dev;
+    object_ref(OBJECT(dev));
 }
 
 void qemu_sglist_add(QEMUSGList *qsg, dma_addr_t base, dma_addr_t len)
@@ -57,6 +61,7 @@ void qemu_sglist_add(QEMUSGList *qsg, dma_addr_t base, dma_addr_t len)
 
 void qemu_sglist_destroy(QEMUSGList *qsg)
 {
+    object_unref(OBJECT(qsg->dev));
     g_free(qsg->sg);
     memset(qsg, 0, sizeof(*qsg));
 }
@@ -138,12 +143,12 @@ static void dma_bdrv_cb(void *opaque, int ret)
 
     dbs->acb = NULL;
     dbs->sector_num += dbs->iov.size / 512;
-    dma_bdrv_unmap(dbs);
 
     if (dbs->sg_cur_index == dbs->sg->nsg || ret < 0) {
         dma_complete(dbs, ret);
         return;
     }
+    dma_bdrv_unmap(dbs);
 
     while (dbs->sg_cur_index < dbs->sg->nsg) {
         cur_addr = dbs->sg->sg[dbs->sg_cur_index].base + dbs->sg_cur_byte;
@@ -208,6 +213,7 @@ BlockDriverAIOCB *dma_bdrv_io(
     dbs->sg_cur_index = 0;
     dbs->sg_cur_byte = 0;
     dbs->dir = dir;
+    dbs->in_cancel = false;
     dbs->io_func = io_func;
     dbs->bh = NULL;
     qemu_iovec_init(&dbs->iov, sg->nsg);

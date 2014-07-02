@@ -28,16 +28,16 @@
 #include "block/block.h"
 
 /**
- * BlockJobType:
+ * BlockJobDriver:
  *
- * A class type for block job objects.
+ * A class type for block job driver.
  */
-typedef struct BlockJobType {
+typedef struct BlockJobDriver {
     /** Derived BlockJob struct size */
     size_t instance_size;
 
     /** String describing the operation, part of query-block-jobs QMP API */
-    const char *job_type;
+    BlockJobType job_type;
 
     /** Optional callback for job types that support setting a speed limit */
     void (*set_speed)(BlockJob *job, int64_t speed, Error **errp);
@@ -50,7 +50,7 @@ typedef struct BlockJobType {
      * manually.
      */
     void (*complete)(BlockJob *job, Error **errp);
-} BlockJobType;
+} BlockJobDriver;
 
 /**
  * BlockJob:
@@ -59,7 +59,7 @@ typedef struct BlockJobType {
  */
 struct BlockJob {
     /** The job type, including the job vtable.  */
-    const BlockJobType *job_type;
+    const BlockJobDriver *driver;
 
     /** The block device on which the job is operating.  */
     BlockDriverState *bs;
@@ -106,6 +106,9 @@ struct BlockJob {
     /** The completion function that will be called when the job completes.  */
     BlockDriverCompletionFunc *cb;
 
+    /** Block other operations when block job is running */
+    Error *blocker;
+
     /** The opaque value that is passed to the completion function.  */
     void *opaque;
 };
@@ -128,7 +131,7 @@ struct BlockJob {
  * This function is not part of the public job interface; it should be
  * called from a wrapper that is specific to the job type.
  */
-void *block_job_create(const BlockJobType *job_type, BlockDriverState *bs,
+void *block_job_create(const BlockJobDriver *driver, BlockDriverState *bs,
                        int64_t speed, BlockDriverCompletionFunc *cb,
                        void *opaque, Error **errp);
 
@@ -141,7 +144,15 @@ void *block_job_create(const BlockJobType *job_type, BlockDriverState *bs,
  * Put the job to sleep (assuming that it wasn't canceled) for @ns
  * nanoseconds.  Canceling the job will interrupt the wait immediately.
  */
-void block_job_sleep_ns(BlockJob *job, QEMUClock *clock, int64_t ns);
+void block_job_sleep_ns(BlockJob *job, QEMUClockType type, int64_t ns);
+
+/**
+ * block_job_yield:
+ * @job: The job that calls the function.
+ *
+ * Yield the block job coroutine.
+ */
+void block_job_yield(BlockJob *job);
 
 /**
  * block_job_completed:
@@ -214,12 +225,21 @@ void block_job_pause(BlockJob *job);
 void block_job_resume(BlockJob *job);
 
 /**
- * qobject_from_block_job:
+ * block_job_event_cancelled:
  * @job: The job whose information is requested.
  *
- * Return a QDict corresponding to @job's query-block-jobs entry.
+ * Send a BLOCK_JOB_CANCELLED event for the specified job.
  */
-QObject *qobject_from_block_job(BlockJob *job);
+void block_job_event_cancelled(BlockJob *job);
+
+/**
+ * block_job_ready:
+ * @job: The job which is now ready to complete.
+ * @msg: Error message. Only present on failure.
+ *
+ * Send a BLOCK_JOB_COMPLETED event for the specified job.
+ */
+void block_job_event_completed(BlockJob *job, const char *msg);
 
 /**
  * block_job_ready:
@@ -227,7 +247,7 @@ QObject *qobject_from_block_job(BlockJob *job);
  *
  * Send a BLOCK_JOB_READY event for the specified job.
  */
-void block_job_ready(BlockJob *job);
+void block_job_event_ready(BlockJob *job);
 
 /**
  * block_job_is_paused:

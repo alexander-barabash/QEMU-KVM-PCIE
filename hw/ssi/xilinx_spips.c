@@ -43,7 +43,7 @@
 
 /* config register */
 #define R_CONFIG            (0x00 / 4)
-#define IFMODE              (1 << 31)
+#define IFMODE              (1U << 31)
 #define ENDIAN              (1 << 26)
 #define MODEFAIL_GEN_EN     (1 << 17)
 #define MAN_START_COM       (1 << 16)
@@ -87,7 +87,7 @@
 
 #define R_LQSPI_CFG         (0xa0 / 4)
 #define R_LQSPI_CFG_RESET       0x03A002EB
-#define LQSPI_CFG_LQ_MODE       (1 << 31)
+#define LQSPI_CFG_LQ_MODE       (1U << 31)
 #define LQSPI_CFG_TWO_MEM       (1 << 30)
 #define LQSPI_CFG_SEP_BUS       (1 << 30)
 #define LQSPI_CFG_U_PAGE        (1 << 28)
@@ -663,7 +663,8 @@ static void xilinx_spips_realize(DeviceState *dev, Error **errp)
         sysbus_init_irq(sbd, &s->cs_lines[i]);
     }
 
-    memory_region_init_io(&s->iomem, xsc->reg_ops, s, "spi", R_MAX*4);
+    memory_region_init_io(&s->iomem, OBJECT(s), xsc->reg_ops, s,
+                          "spi", R_MAX*4);
     sysbus_init_mmio(sbd, &s->iomem);
 
     s->irqline = -1;
@@ -685,7 +686,7 @@ static void xilinx_qspips_realize(DeviceState *dev, Error **errp)
     s->num_txrx_bytes = 4;
 
     xilinx_spips_realize(dev, errp);
-    memory_region_init_io(&s->mmlqspi, &lqspi_ops, s, "lqspi",
+    memory_region_init_io(&s->mmlqspi, OBJECT(s), &lqspi_ops, s, "lqspi",
                           (1 << LQSPI_ADDRESS_BITS) * 2);
     sysbus_init_mmio(sbd, &s->mmlqspi);
 
@@ -703,7 +704,6 @@ static const VMStateDescription vmstate_xilinx_spips = {
     .name = "xilinx_spips",
     .version_id = 2,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
     .post_load = xilinx_spips_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_FIFO8(tx_fifo, XilinxSPIPS),

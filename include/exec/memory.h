@@ -16,6 +16,11 @@
 
 #ifndef CONFIG_USER_ONLY
 
+#define DIRTY_MEMORY_VGA       0
+#define DIRTY_MEMORY_CODE      1
+#define DIRTY_MEMORY_MIGRATION 2
+#define DIRTY_MEMORY_NUM       3        /* num of dirty bits */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "qemu-common.h"
@@ -24,36 +29,24 @@
 #include "exec/hwaddr.h"
 #endif
 #include "qemu/queue.h"
-#include "exec/iorange.h"
-#include "exec/ioport.h"
 #include "qemu/int128.h"
 #include "qemu/notify.h"
+#include "qapi/error.h"
+#include "qom/object.h"
 
 #define MAX_PHYS_ADDR_SPACE_BITS 62
 #define MAX_PHYS_ADDR            (((hwaddr)1 << MAX_PHYS_ADDR_SPACE_BITS) - 1)
 
-typedef struct MemoryRegionOps MemoryRegionOps;
-typedef struct MemoryRegionPortio MemoryRegionPortio;
-typedef struct MemoryRegionMmio MemoryRegionMmio;
+#define TYPE_MEMORY_REGION "qemu:memory-region"
+#define MEMORY_REGION(obj) \
+        OBJECT_CHECK(MemoryRegion, (obj), TYPE_MEMORY_REGION)
 
-/* Must match *_DIRTY_FLAGS in cpu-all.h.  To be replaced with dynamic
- * registration.
- */
-#define DIRTY_MEMORY_VGA       0
-#define DIRTY_MEMORY_CODE      1
-#define DIRTY_MEMORY_MIGRATION 3
+typedef struct MemoryRegionOps MemoryRegionOps;
+typedef struct MemoryRegionMmio MemoryRegionMmio;
 
 struct MemoryRegionMmio {
     CPUReadMemoryFunc *read[3];
     CPUWriteMemoryFunc *write[3];
-};
-
-/* Internal use; thunks between old-style IORange and MemoryRegions. */
-typedef struct MemoryRegionIORange MemoryRegionIORange;
-struct MemoryRegionIORange {
-    IORange iorange;
-    MemoryRegion *mr;
-    hwaddr offset;
 };
 
 typedef struct IOMMUTLBEntry IOMMUTLBEntry;
@@ -123,13 +116,9 @@ struct MemoryRegionOps {
         /* If true, unaligned accesses are supported.  Otherwise all accesses
          * are converted to (possibly multiple) naturally aligned accesses.
          */
-         bool unaligned;
+        bool unaligned;
     } impl;
 
-    /* If .read and .write are not present, old_portio may be used for
-     * backwards compatibility with old portio registration
-     */
-    const MemoryRegionPortio *old_portio;
     /* If .read and .write are not present, old_mmio may be used for
      * backwards compatibility with old mmio registration
      */
@@ -147,11 +136,12 @@ typedef struct CoalescedMemoryRange CoalescedMemoryRange;
 typedef struct MemoryRegionIoeventfd MemoryRegionIoeventfd;
 
 struct MemoryRegion {
+    Object parent_obj;
     /* All fields are private - violators will be prosecuted */
     const MemoryRegionOps *ops;
     const MemoryRegionIOMMUOps *iommu_ops;
     void *opaque;
-    MemoryRegion *parent;
+    MemoryRegion *container;
     Int128 size;
     hwaddr addr;
     void (*destructor)(MemoryRegion *mr);
@@ -167,7 +157,7 @@ struct MemoryRegion {
     bool flush_coalesced_mmio;
     MemoryRegion *alias;
     hwaddr alias_offset;
-    unsigned priority;
+    int32_t priority;
     bool may_overlap;
     QTAILQ_HEAD(subregions, MemoryRegion) subregions;
     QTAILQ_ENTRY(MemoryRegion) subregions_link;
@@ -178,52 +168,6 @@ struct MemoryRegion {
     MemoryRegionIoeventfd *ioeventfds;
     NotifierList iommu_notify;
 };
-
-struct MemoryRegionPortio {
-    uint32_t offset;
-    uint32_t len;
-    unsigned size;
-    IOPortReadFunc *read;
-    IOPortWriteFunc *write;
-};
-
-#define PORTIO_END_OF_LIST() { }
-
-/**
- * AddressSpace: describes a mapping of addresses to #MemoryRegion objects
- */
-struct AddressSpace {
-    /* All fields are private. */
-    char *name;
-    MemoryRegion *root;
-    struct FlatView *current_map;
-    int ioeventfd_nb;
-    struct MemoryRegionIoeventfd *ioeventfds;
-    struct AddressSpaceDispatch *dispatch;
-    QTAILQ_ENTRY(AddressSpace) address_spaces_link;
-};
-
-/**
- * MemoryRegionSection: describes a fragment of a #MemoryRegion
- *
- * @mr: the region, or %NULL if empty
- * @address_space: the address space the region is mapped in
- * @offset_within_region: the beginning of the section, relative to @mr's start
- * @size: the size of the section; will not exceed @mr's boundaries
- * @offset_within_address_space: the address of the first byte of the section
- *     relative to the region's address space
- * @readonly: writes to this section are ignored
- */
-struct MemoryRegionSection {
-    MemoryRegion *mr;
-    AddressSpace *address_space;
-    hwaddr offset_within_region;
-    Int128 size;
-    hwaddr offset_within_address_space;
-    bool readonly;
-};
-
-typedef struct MemoryListener MemoryListener;
 
 /**
  * MemoryListener: callbacks structure for updates to the physical memory map
@@ -257,18 +201,87 @@ struct MemoryListener {
 };
 
 /**
+ * AddressSpace: describes a mapping of addresses to #MemoryRegion objects
+ */
+struct AddressSpace {
+    /* All fields are private. */
+    char *name;
+    MemoryRegion *root;
+    struct FlatView *current_map;
+    int ioeventfd_nb;
+    struct MemoryRegionIoeventfd *ioeventfds;
+    struct AddressSpaceDispatch *dispatch;
+    struct AddressSpaceDispatch *next_dispatch;
+    MemoryListener dispatch_listener;
+
+    QTAILQ_ENTRY(AddressSpace) address_spaces_link;
+};
+
+/**
+ * MemoryRegionSection: describes a fragment of a #MemoryRegion
+ *
+ * @mr: the region, or %NULL if empty
+ * @address_space: the address space the region is mapped in
+ * @offset_within_region: the beginning of the section, relative to @mr's start
+ * @size: the size of the section; will not exceed @mr's boundaries
+ * @offset_within_address_space: the address of the first byte of the section
+ *     relative to the region's address space
+ * @readonly: writes to this section are ignored
+ */
+struct MemoryRegionSection {
+    MemoryRegion *mr;
+    AddressSpace *address_space;
+    hwaddr offset_within_region;
+    Int128 size;
+    hwaddr offset_within_address_space;
+    bool readonly;
+};
+
+/**
  * memory_region_init: Initialize a memory region
  *
  * The region typically acts as a container for other memory regions.  Use
  * memory_region_add_subregion() to add subregions.
  *
  * @mr: the #MemoryRegion to be initialized
+ * @owner: the object that tracks the region's reference count
  * @name: used for debugging; not visible to the user or ABI
  * @size: size of the region; any subregions beyond this size will be clipped
  */
 void memory_region_init(MemoryRegion *mr,
+                        struct Object *owner,
                         const char *name,
                         uint64_t size);
+
+/**
+ * memory_region_ref: Add 1 to a memory region's reference count
+ *
+ * Whenever memory regions are accessed outside the BQL, they need to be
+ * preserved against hot-unplug.  MemoryRegions actually do not have their
+ * own reference count; they piggyback on a QOM object, their "owner".
+ * This function adds a reference to the owner.
+ *
+ * All MemoryRegions must have an owner if they can disappear, even if the
+ * device they belong to operates exclusively under the BQL.  This is because
+ * the region could be returned at any time by memory_region_find, and this
+ * is usually under guest control.
+ *
+ * @mr: the #MemoryRegion
+ */
+void memory_region_ref(MemoryRegion *mr);
+
+/**
+ * memory_region_unref: Remove 1 to a memory region's reference count
+ *
+ * Whenever memory regions are accessed outside the BQL, they need to be
+ * preserved against hot-unplug.  MemoryRegions actually do not have their
+ * own reference count; they piggyback on a QOM object, their "owner".
+ * This function removes a reference to the owner and possibly destroys it.
+ *
+ * @mr: the #MemoryRegion
+ */
+void memory_region_unref(MemoryRegion *mr);
+
 /**
  * memory_region_init_io: Initialize an I/O memory region.
  *
@@ -276,6 +289,7 @@ void memory_region_init(MemoryRegion *mr,
  * if @size is nonzero, subregions will be clipped to @size.
  *
  * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
  * @ops: a structure containing read and write callbacks to be used when
  *       I/O is performed on the region.
  * @opaque: passed to to the read and write callbacks of the @ops structure.
@@ -283,6 +297,7 @@ void memory_region_init(MemoryRegion *mr,
  * @size: size of the region.
  */
 void memory_region_init_io(MemoryRegion *mr,
+                           struct Object *owner,
                            const MemoryRegionOps *ops,
                            void *opaque,
                            const char *name,
@@ -293,12 +308,36 @@ void memory_region_init_io(MemoryRegion *mr,
  *                          region will modify memory directly.
  *
  * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
  * @name: the name of the region.
  * @size: size of the region.
  */
 void memory_region_init_ram(MemoryRegion *mr,
+                            struct Object *owner,
                             const char *name,
                             uint64_t size);
+
+#ifdef __linux__
+/**
+ * memory_region_init_ram_from_file:  Initialize RAM memory region with a
+ *                                    mmap-ed backend.
+ *
+ * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
+ * @name: the name of the region.
+ * @size: size of the region.
+ * @share: %true if memory must be mmaped with the MAP_SHARED flag
+ * @path: the path in which to allocate the RAM.
+ * @errp: pointer to Error*, to store an error if it happens.
+ */
+void memory_region_init_ram_from_file(MemoryRegion *mr,
+                                      struct Object *owner,
+                                      const char *name,
+                                      uint64_t size,
+                                      bool share,
+                                      const char *path,
+                                      Error **errp);
+#endif
 
 /**
  * memory_region_init_ram_ptr:  Initialize RAM memory region from a
@@ -306,11 +345,13 @@ void memory_region_init_ram(MemoryRegion *mr,
  *                              region will modify memory directly.
  *
  * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
  * @name: the name of the region.
  * @size: size of the region.
  * @ptr: memory to be mapped; must contain at least @size bytes.
  */
 void memory_region_init_ram_ptr(MemoryRegion *mr,
+                                struct Object *owner,
                                 const char *name,
                                 uint64_t size,
                                 void *ptr);
@@ -320,6 +361,7 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
  *                           part of another memory region.
  *
  * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
  * @name: used for debugging; not visible to the user or ABI
  * @orig: the region to be referenced; @mr will be equivalent to
  *        @orig between @offset and @offset + @size - 1.
@@ -327,6 +369,7 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
  * @size: size of the region.
  */
 void memory_region_init_alias(MemoryRegion *mr,
+                              struct Object *owner,
                               const char *name,
                               MemoryRegion *orig,
                               hwaddr offset,
@@ -337,11 +380,13 @@ void memory_region_init_alias(MemoryRegion *mr,
  *                                 handled via callbacks.
  *
  * @mr: the #MemoryRegion to be initialized.
+ * @owner: the object that tracks the region's reference count
  * @ops: callbacks for write access handling.
  * @name: the name of the region.
  * @size: size of the region.
  */
 void memory_region_init_rom_device(MemoryRegion *mr,
+                                   struct Object *owner,
                                    const MemoryRegionOps *ops,
                                    void *opaque,
                                    const char *name,
@@ -356,10 +401,12 @@ void memory_region_init_rom_device(MemoryRegion *mr,
  * the memory API will cause an abort().
  *
  * @mr: the #MemoryRegion to be initialized
+ * @owner: the object that tracks the region's reference count
  * @name: used for debugging; not visible to the user or ABI
  * @size: size of the region.
  */
 void memory_region_init_reservation(MemoryRegion *mr,
+                                    struct Object *owner,
                                     const char *name,
                                     uint64_t size);
 
@@ -371,11 +418,13 @@ void memory_region_init_reservation(MemoryRegion *mr,
  * memory region.
  *
  * @mr: the #MemoryRegion to be initialized
+ * @owner: the object that tracks the region's reference count
  * @ops: a function that translates addresses into the @target region
  * @name: used for debugging; not visible to the user or ABI
  * @size: size of the region.
  */
 void memory_region_init_iommu(MemoryRegion *mr,
+                              struct Object *owner,
                               const MemoryRegionIOMMUOps *ops,
                               const char *name,
                               uint64_t size);
@@ -388,6 +437,13 @@ void memory_region_init_iommu(MemoryRegion *mr,
  *      (see memory_region_init_alias()).
  */
 void memory_region_destroy(MemoryRegion *mr);
+
+/**
+ * memory_region_owner: get a memory region's owner.
+ *
+ * @mr: the memory region being queried.
+ */
+struct Object *memory_region_owner(MemoryRegion *mr);
 
 /**
  * memory_region_size: get a memory region's size.
@@ -483,6 +539,16 @@ bool memory_region_is_logging(MemoryRegion *mr);
  * @mr: the memory region being queried
  */
 bool memory_region_is_rom(MemoryRegion *mr);
+
+/**
+ * memory_region_get_fd: Get a file descriptor backing a RAM memory region.
+ *
+ * Returns a file descriptor backing a file-based RAM memory region,
+ * or -1 if the region is not a file-based RAM memory region.
+ *
+ * @mr: the RAM or alias memory region being queried.
+ */
+int memory_region_get_fd(MemoryRegion *mr);
 
 /**
  * memory_region_get_ram_ptr: Get a pointer into a RAM memory region.
@@ -747,7 +813,7 @@ void memory_region_add_subregion(MemoryRegion *mr,
 void memory_region_add_subregion_overlap(MemoryRegion *mr,
                                          hwaddr offset,
                                          MemoryRegion *subregion,
-                                         unsigned priority);
+                                         int priority);
 
 /**
  * memory_region_get_ram_addr: Get the ram address associated with a memory
@@ -787,11 +853,11 @@ void memory_region_set_enabled(MemoryRegion *mr, bool enabled);
 /*
  * memory_region_set_address: dynamically update the address of a region
  *
- * Dynamically updates the address of a region, relative to its parent.
+ * Dynamically updates the address of a region, relative to its container.
  * May be used on regions are currently part of a memory hierarchy.
  *
  * @mr: the region to be updated
- * @addr: new address, relative to parent region
+ * @addr: new address, relative to container region
  */
 void memory_region_set_address(MemoryRegion *mr, hwaddr addr);
 
@@ -806,6 +872,26 @@ void memory_region_set_address(MemoryRegion *mr, hwaddr addr);
  */
 void memory_region_set_alias_offset(MemoryRegion *mr,
                                     hwaddr offset);
+
+/**
+ * memory_region_present: checks if an address relative to a @container
+ * translates into #MemoryRegion within @container
+ *
+ * Answer whether a #MemoryRegion within @container covers the address
+ * @addr.
+ *
+ * @container: a #MemoryRegion within which @addr is a relative address
+ * @addr: the area within @container to be searched
+ */
+bool memory_region_present(MemoryRegion *container, hwaddr addr);
+
+/**
+ * memory_region_is_mapped: returns true if #MemoryRegion is mapped
+ * into any address space.
+ *
+ * @mr: a #MemoryRegion which should be checked if it's mapped
+ */
+bool memory_region_is_mapped(MemoryRegion *mr);
 
 /**
  * memory_region_find: translate an address/size relative to a
@@ -826,7 +912,7 @@ void memory_region_set_alias_offset(MemoryRegion *mr,
  * Similarly, the .@offset_within_address_space is relative to the
  * address space that contains both regions, the passed and the
  * returned one.  However, in the special case where the @mr argument
- * has no parent (and thus is the root of the address space), the
+ * has no container (and thus is the root of the address space), the
  * following will hold:
  *    .@offset_within_address_space >= @addr
  *    .@offset_within_address_space + .@size <= @addr + @size

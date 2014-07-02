@@ -27,8 +27,6 @@
 #include "qemu/log.h"
 #include "exec/address-spaces.h"
 
-//#define DEBUG_MMIO
-//#define DEBUG_UNASSIGNED
 #define DEBUG_UIC
 
 
@@ -163,7 +161,7 @@ static void ppcuic_set_irq (void *opaque, int irq_num, int level)
     uint32_t mask, sr;
 
     uic = opaque;
-    mask = 1 << (31-irq_num);
+    mask = 1U << (31-irq_num);
     LOG_UIC("%s: irq %d level %d uicsr %08" PRIx32
                 " mask %08" PRIx32 " => %08" PRIx32 " %08" PRIx32 "\n",
                 __func__, irq_num, level,
@@ -431,7 +429,7 @@ static void sdram_set_bcr(ppc4xx_sdram_t *sdram,
         printf("%s: Map RAM area " TARGET_FMT_plx " " TARGET_FMT_lx "\n",
                __func__, sdram_base(bcr), sdram_size(bcr));
 #endif
-        memory_region_init(&sdram->containers[n], "sdram-containers",
+        memory_region_init(&sdram->containers[n], NULL, "sdram-containers",
                            sdram_size(bcr));
         memory_region_add_subregion(&sdram->containers[n], 0,
                                     &sdram->ram_memories[n]);
@@ -696,7 +694,7 @@ ram_addr_t ppc4xx_sdram_adjust(ram_addr_t ram_size, int nr_banks,
             if (bank_size <= size_left) {
                 char name[32];
                 snprintf(name, sizeof(name), "ppc4xx.sdram%d", i);
-                memory_region_init_ram(&ram_memories[i], name, bank_size);
+                memory_region_init_ram(&ram_memories[i], NULL, name, bank_size);
                 vmstate_register_ram_global(&ram_memories[i]);
                 ram_bases[i] = base;
                 ram_sizes[i] = bank_size;

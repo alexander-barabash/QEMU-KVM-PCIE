@@ -41,14 +41,6 @@ void coroutine_fn qemu_co_queue_wait(CoQueue *queue)
     assert(qemu_in_coroutine());
 }
 
-void coroutine_fn qemu_co_queue_wait_insert_head(CoQueue *queue)
-{
-    Coroutine *self = qemu_coroutine_self();
-    QTAILQ_INSERT_HEAD(&queue->entries, self, co_queue_next);
-    qemu_coroutine_yield();
-    assert(qemu_in_coroutine());
-}
-
 /**
  * qemu_co_queue_run_restart:
  *
@@ -88,14 +80,30 @@ static bool qemu_co_queue_do_restart(CoQueue *queue, bool single)
     return true;
 }
 
-bool qemu_co_queue_next(CoQueue *queue)
+bool coroutine_fn qemu_co_queue_next(CoQueue *queue)
 {
+    assert(qemu_in_coroutine());
     return qemu_co_queue_do_restart(queue, true);
 }
 
-void qemu_co_queue_restart_all(CoQueue *queue)
+void coroutine_fn qemu_co_queue_restart_all(CoQueue *queue)
 {
+    assert(qemu_in_coroutine());
     qemu_co_queue_do_restart(queue, false);
+}
+
+bool qemu_co_enter_next(CoQueue *queue)
+{
+    Coroutine *next;
+
+    next = QTAILQ_FIRST(&queue->entries);
+    if (!next) {
+        return false;
+    }
+
+    QTAILQ_REMOVE(&queue->entries, next, co_queue_next);
+    qemu_coroutine_enter(next, NULL);
+    return true;
 }
 
 bool qemu_co_queue_empty(CoQueue *queue)

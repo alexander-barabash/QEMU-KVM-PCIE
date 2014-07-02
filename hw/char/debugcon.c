@@ -103,16 +103,16 @@ static void debugcon_isa_realizefn(DeviceState *dev, Error **errp)
         error_propagate(errp, err);
         return;
     }
-    memory_region_init_io(&s->io, &debugcon_ops, s,
+    memory_region_init_io(&s->io, OBJECT(dev), &debugcon_ops, s,
                           TYPE_ISA_DEBUGCON_DEVICE, 1);
     memory_region_add_subregion(isa_address_space_io(d),
                                 isa->iobase, &s->io);
 }
 
 static Property debugcon_isa_properties[] = {
-    DEFINE_PROP_HEX32("iobase", ISADebugconState, iobase, 0xe9),
+    DEFINE_PROP_UINT32("iobase", ISADebugconState, iobase, 0xe9),
     DEFINE_PROP_CHR("chardev",  ISADebugconState, state.chr),
-    DEFINE_PROP_HEX32("readback", ISADebugconState, state.readback, 0xe9),
+    DEFINE_PROP_UINT32("readback", ISADebugconState, state.readback, 0xe9),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -122,6 +122,7 @@ static void debugcon_isa_class_initfn(ObjectClass *klass, void *data)
 
     dc->realize = debugcon_isa_realizefn;
     dc->props = debugcon_isa_properties;
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static const TypeInfo debugcon_isa_info = {

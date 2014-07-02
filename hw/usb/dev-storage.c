@@ -117,7 +117,7 @@ static const USBDescDevice desc_device_full = {
             .bNumInterfaces        = 1,
             .bConfigurationValue   = 1,
             .iConfiguration        = STR_CONFIG_FULL,
-            .bmAttributes          = 0xc0,
+            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_SELFPOWER,
             .nif = 1,
             .ifs = &desc_iface_full,
         },
@@ -152,7 +152,7 @@ static const USBDescDevice desc_device_high = {
             .bNumInterfaces        = 1,
             .bConfigurationValue   = 1,
             .iConfiguration        = STR_CONFIG_HIGH,
-            .bmAttributes          = 0xc0,
+            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_SELFPOWER,
             .nif = 1,
             .ifs = &desc_iface_high,
         },
@@ -189,7 +189,7 @@ static const USBDescDevice desc_device_super = {
             .bNumInterfaces        = 1,
             .bConfigurationValue   = 1,
             .iConfiguration        = STR_CONFIG_SUPER,
-            .bmAttributes          = 0xc0,
+            .bmAttributes          = USB_CFG_ATT_ONE | USB_CFG_ATT_SELFPOWER,
             .nif = 1,
             .ifs = &desc_iface_super,
         },
@@ -595,6 +595,7 @@ static int usb_msd_initfn_storage(USBDevice *dev)
     MSDState *s = DO_UPCAST(MSDState, dev, dev);
     BlockDriverState *bs = s->conf.bs;
     SCSIDevice *scsi_dev;
+    Error *err = NULL;
 
     if (!bs) {
         error_report("drive property not set");
@@ -617,9 +618,11 @@ static int usb_msd_initfn_storage(USBDevice *dev)
 
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
-    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_storage, NULL);
+    scsi_bus_new(&s->bus, sizeof(s->bus), DEVICE(dev),
+                 &usb_msd_scsi_info_storage, NULL);
     scsi_dev = scsi_bus_legacy_add_drive(&s->bus, bs, 0, !!s->removable,
-                                            s->conf.bootindex, dev->serial);
+                                         s->conf.bootindex, dev->serial,
+                                         &err);
     if (!scsi_dev) {
         return -1;
     }
@@ -644,7 +647,8 @@ static int usb_msd_initfn_bot(USBDevice *dev)
 
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
-    scsi_bus_new(&s->bus, &s->dev.qdev, &usb_msd_scsi_info_bot, NULL);
+    scsi_bus_new(&s->bus, sizeof(s->bus), DEVICE(dev),
+                 &usb_msd_scsi_info_bot, NULL);
     s->bus.qbus.allow_hotplug = 0;
     usb_msd_handle_reset(dev);
 
@@ -687,7 +691,7 @@ static USBDevice *usb_msd_init(USBBus *bus, const char *filename)
     qemu_opt_set(opts, "if", "none");
 
     /* create host drive */
-    dinfo = drive_init(opts, 0);
+    dinfo = drive_new(opts, 0);
     if (!dinfo) {
         qemu_opts_del(opts);
         return NULL;
@@ -699,7 +703,7 @@ static USBDevice *usb_msd_init(USBBus *bus, const char *filename)
         return NULL;
     }
     if (qdev_prop_set_drive(&dev->qdev, "drive", dinfo->bdrv) < 0) {
-        qdev_free(&dev->qdev);
+        object_unparent(OBJECT(dev));
         return NULL;
     }
     if (qdev_init(&dev->qdev) < 0)
@@ -712,7 +716,7 @@ static const VMStateDescription vmstate_usb_msd = {
     .name = "usb-storage",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_USB_DEVICE(dev, MSDState),
         VMSTATE_UINT32(mode, MSDState),
         VMSTATE_UINT32(scsi_len, MSDState),
@@ -744,6 +748,7 @@ static void usb_msd_class_initfn_common(ObjectClass *klass)
     uc->handle_reset   = usb_msd_handle_reset;
     uc->handle_control = usb_msd_handle_control;
     uc->handle_data    = usb_msd_handle_data;
+    set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
     dc->fw_name = "storage";
     dc->vmsd = &vmstate_usb_msd;
 }

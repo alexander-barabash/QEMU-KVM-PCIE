@@ -22,9 +22,11 @@
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
 bool kvm_async_interrupts_allowed;
+bool kvm_eventfds_allowed;
 bool kvm_irqfds_allowed;
 bool kvm_msi_via_irqfd_allowed;
 bool kvm_gsi_routing_allowed;
+bool kvm_gsi_direct_mapping;
 bool kvm_allowed;
 bool kvm_readonly_mem_allowed;
 
@@ -33,7 +35,7 @@ int kvm_init_vcpu(CPUState *cpu)
     return -ENOSYS;
 }
 
-int kvm_init(void)
+int kvm_init(MachineClass *mc)
 {
     return -ENOSYS;
 }
@@ -78,24 +80,24 @@ void kvm_setup_guest_memory(void *start, size_t size)
 {
 }
 
-int kvm_update_guest_debug(CPUArchState *env, unsigned long reinject_trap)
+int kvm_update_guest_debug(CPUState *cpu, unsigned long reinject_trap)
 {
     return -ENOSYS;
 }
 
-int kvm_insert_breakpoint(CPUArchState *current_env, target_ulong addr,
+int kvm_insert_breakpoint(CPUState *cpu, target_ulong addr,
                           target_ulong len, int type)
 {
     return -EINVAL;
 }
 
-int kvm_remove_breakpoint(CPUArchState *current_env, target_ulong addr,
+int kvm_remove_breakpoint(CPUState *cpu, target_ulong addr,
                           target_ulong len, int type)
 {
     return -EINVAL;
 }
 
-void kvm_remove_all_breakpoints(CPUArchState *current_env)
+void kvm_remove_all_breakpoints(CPUState *cpu)
 {
 }
 
@@ -135,7 +137,13 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg)
     return -ENOSYS;
 }
 
-int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n, int virq)
+int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter)
+{
+    return -ENOSYS;
+}
+
+int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n,
+                                   EventNotifier *rn, int virq)
 {
     return -ENOSYS;
 }

@@ -136,7 +136,7 @@ static void visit_primitive_type(Visitor *v, void **native, Error **errp)
         visit_type_int64(v, &pt->value.s64, NULL, errp);
         break;
     case PTYPE_EOL:
-        g_assert(false);
+        g_assert_not_reached();
     }
 }
 
@@ -181,7 +181,7 @@ static void visit_primitive_list(Visitor *v, void **native, Error **errp)
         visit_type_uint64List(v, &pl->value.u64_integers, NULL, errp);
         break;
     default:
-        g_assert(false);
+        g_assert_not_reached();
     }
 }
 
@@ -195,13 +195,29 @@ typedef struct TestStruct
 static void visit_type_TestStruct(Visitor *v, TestStruct **obj,
                                   const char *name, Error **errp)
 {
-    visit_start_struct(v, (void **)obj, NULL, name, sizeof(TestStruct), errp);
+    Error *err = NULL;
 
-    visit_type_int(v, &(*obj)->integer, "integer", errp);
-    visit_type_bool(v, &(*obj)->boolean, "boolean", errp);
-    visit_type_str(v, &(*obj)->string, "string", errp);
+    visit_start_struct(v, (void **)obj, NULL, name, sizeof(TestStruct), &err);
+    if (err) {
+        goto out;
+    }
 
-    visit_end_struct(v, errp);
+    visit_type_int(v, &(*obj)->integer, "integer", &err);
+    if (err) {
+        goto out_end;
+    }
+    visit_type_bool(v, &(*obj)->boolean, "boolean", &err);
+    if (err) {
+        goto out_end;
+    }
+    visit_type_str(v, &(*obj)->string, "string", &err);
+
+out_end:
+    error_propagate(errp, err);
+    err = NULL;
+    visit_end_struct(v, &err);
+out:
+    error_propagate(errp, err);
 }
 
 static TestStruct *struct_create(void)
@@ -239,12 +255,14 @@ static UserDefNested *nested_struct_create(void)
     udnp->string0 = strdup("test_string0");
     udnp->dict1.string1 = strdup("test_string1");
     udnp->dict1.dict2.userdef1 = g_malloc0(sizeof(UserDefOne));
-    udnp->dict1.dict2.userdef1->integer = 42;
+    udnp->dict1.dict2.userdef1->base = g_new0(UserDefZero, 1);
+    udnp->dict1.dict2.userdef1->base->integer = 42;
     udnp->dict1.dict2.userdef1->string = strdup("test_string");
     udnp->dict1.dict2.string2 = strdup("test_string2");
     udnp->dict1.has_dict3 = true;
     udnp->dict1.dict3.userdef2 = g_malloc0(sizeof(UserDefOne));
-    udnp->dict1.dict3.userdef2->integer = 43;
+    udnp->dict1.dict3.userdef2->base = g_new0(UserDefZero, 1);
+    udnp->dict1.dict3.userdef2->base->integer = 43;
     udnp->dict1.dict3.userdef2->string = strdup("test_string");
     udnp->dict1.dict3.string3 = strdup("test_string3");
     return udnp;
@@ -256,14 +274,14 @@ static void nested_struct_compare(UserDefNested *udnp1, UserDefNested *udnp2)
     g_assert(udnp2);
     g_assert_cmpstr(udnp1->string0, ==, udnp2->string0);
     g_assert_cmpstr(udnp1->dict1.string1, ==, udnp2->dict1.string1);
-    g_assert_cmpint(udnp1->dict1.dict2.userdef1->integer, ==,
-                    udnp2->dict1.dict2.userdef1->integer);
+    g_assert_cmpint(udnp1->dict1.dict2.userdef1->base->integer, ==,
+                    udnp2->dict1.dict2.userdef1->base->integer);
     g_assert_cmpstr(udnp1->dict1.dict2.userdef1->string, ==,
                     udnp2->dict1.dict2.userdef1->string);
     g_assert_cmpstr(udnp1->dict1.dict2.string2, ==, udnp2->dict1.dict2.string2);
     g_assert(udnp1->dict1.has_dict3 == udnp2->dict1.has_dict3);
-    g_assert_cmpint(udnp1->dict1.dict3.userdef2->integer, ==,
-                    udnp2->dict1.dict3.userdef2->integer);
+    g_assert_cmpint(udnp1->dict1.dict3.userdef2->base->integer, ==,
+                    udnp2->dict1.dict3.userdef2->base->integer);
     g_assert_cmpstr(udnp1->dict1.dict3.userdef2->string, ==,
                     udnp2->dict1.dict3.userdef2->string);
     g_assert_cmpstr(udnp1->dict1.dict3.string3, ==, udnp2->dict1.dict3.string3);
@@ -500,7 +518,7 @@ static void test_primitive_lists(gconstpointer opaque)
             break;
         }
         default:
-            g_assert(0);
+            g_assert_not_reached();
         }
     }
 
@@ -656,7 +674,7 @@ static void test_primitive_lists(gconstpointer opaque)
             break;
         }
         default:
-            g_assert(0);
+            g_assert_not_reached();
         }
         i++;
     } while (cur_head);
@@ -1083,7 +1101,7 @@ static void string_serialize(void *native_in, void **datap,
 {
     StringSerializeData *d = g_malloc0(sizeof(*d));
 
-    d->sov = string_output_visitor_new();
+    d->sov = string_output_visitor_new(false);
     visit(string_output_get_visitor(d->sov), &native_in, errp);
     *datap = d;
 }
