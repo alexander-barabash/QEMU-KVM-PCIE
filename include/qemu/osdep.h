@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 #ifdef __OpenBSD__
 #include <sys/signal.h>
@@ -254,5 +255,17 @@ static inline unsigned long qemu_getauxval(unsigned long type) { return 0; }
 void qemu_set_tty_echo(int fd, bool echo);
 
 void os_mem_prealloc(int fd, char *area, size_t sz);
+
+typedef struct QemuMappedFileData {
+    char *filename;
+    uint64_t length;
+    uint64_t offset;
+    bool readonly;
+    void *pointer;
+    int fd;
+} QemuMappedFileData;
+
+bool qemu_map_file_data(QemuMappedFileData *data);
+void qemu_unmap_file_data(QemuMappedFileData *data);
 
 #endif

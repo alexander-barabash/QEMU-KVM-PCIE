@@ -522,10 +522,13 @@ static void set_pci_devfn(Object *obj, Visitor *v, void *opaque,
     if (sscanf(str, "%x.%x%n", &slot, &fn, &n) != 2) {
         fn = 0;
         if (sscanf(str, "%x%n", &slot, &n) != 1) {
-            goto invalid;
+            slot = 0x20;
+            if (sscanf(str, ".%x%n", &fn, &n) != 1) {
+                goto invalid;
+            }
         }
     }
-    if (str[n] != '\0' || fn > 7 || slot > 31) {
+    if (str[n] != '\0' || fn > 7 || slot > 0x20) {
         goto invalid;
     }
     *ptr = slot << 3 | fn;

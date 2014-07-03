@@ -561,6 +561,11 @@ int memory_region_get_fd(MemoryRegion *mr);
  */
 void *memory_region_get_ram_ptr(MemoryRegion *mr);
 
+void memory_region_xfer_to_ram(MemoryRegion *mr, hwaddr addr,
+                               const uint8_t *buf, int len);
+void memory_region_xfer_from_ram(MemoryRegion *mr, uint8_t *buf,
+                                 hwaddr addr, int len);
+
 /**
  * memory_region_set_log: Turn dirty logging on or off for a region.
  *

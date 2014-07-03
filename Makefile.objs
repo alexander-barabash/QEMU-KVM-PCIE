@@ -61,6 +61,7 @@ common-obj-$(CONFIG_POSIX) += migration-exec.o migration-unix.o migration-fd.o
 
 common-obj-$(CONFIG_SPICE) += spice-qemu-char.o
 
+common-obj-y += ipc/
 common-obj-y += audio/
 common-obj-y += hw/
 

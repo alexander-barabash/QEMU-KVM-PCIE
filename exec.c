@@ -1463,6 +1463,7 @@ void *qemu_get_ram_block_host_ptr(ram_addr_t addr)
     return block->host;
 }
 
+int qemu_get_ram_ptr_ok;
 /* Return a host pointer to ram allocated with qemu_ram_alloc.
    With the exception of the softmmu code in this file, this should
    only be used for local memory (e.g. video ram) that the device owns,
@@ -1474,6 +1475,11 @@ void *qemu_get_ram_block_host_ptr(ram_addr_t addr)
 void *qemu_get_ram_ptr(ram_addr_t addr)
 {
     RAMBlock *block = qemu_get_ram_block(addr);
+
+    if (!qemu_get_ram_ptr_ok) {
+        fprintf(stderr, "qemu_get_ram_ptr 0x%llx\n",
+                (long long)addr);
+    }
 
     if (xen_enabled()) {
         /* We need to check if the requested address is in the RAM
@@ -2013,11 +2019,42 @@ static int memory_access_size(MemoryRegion *mr, unsigned l, hwaddr addr)
     return l;
 }
 
+int (*pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len);
+void *kvm_xfer_data;
+
+void memory_region_xfer_to_ram(MemoryRegion *mr, hwaddr addr,
+                               const uint8_t *buf, int len)
+{
+    uint8_t *ptr;
+    addr += memory_region_get_ram_addr(mr);
+    qemu_get_ram_ptr_ok = 1;
+    ptr = qemu_get_ram_ptr(addr);
+    qemu_get_ram_ptr_ok = 0;
+    if ((pkvm_xfer == NULL) ||
+        (pkvm_xfer(kvm_xfer_data, ptr, buf, len) != 0)) {
+        memcpy(ptr, buf, len);
+    }
+    invalidate_and_set_dirty(addr, len);
+}
+
+void memory_region_xfer_from_ram(MemoryRegion *mr, uint8_t *buf,
+                                        hwaddr addr, int len)
+{
+    uint8_t *ptr;
+    addr += memory_region_get_ram_addr(mr);
+    qemu_get_ram_ptr_ok = 1;
+    ptr = qemu_get_ram_ptr(addr);
+    qemu_get_ram_ptr_ok = 0;
+    if ((pkvm_xfer == NULL) ||
+        (pkvm_xfer(kvm_xfer_data, buf, ptr, len) != 0)) {
+        memcpy(buf, ptr, len);
+    }
+}
+
 bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
                       int len, bool is_write)
 {
     hwaddr l;
-    uint8_t *ptr;
     uint64_t val;
     hwaddr addr1;
     MemoryRegion *mr;
@@ -2057,11 +2094,8 @@ bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
                     abort();
                 }
             } else {
-                addr1 += memory_region_get_ram_addr(mr);
                 /* RAM case */
-                ptr = qemu_get_ram_ptr(addr1);
-                memcpy(ptr, buf, l);
-                invalidate_and_set_dirty(addr1, l);
+                memory_region_xfer_to_ram(mr, addr1, buf, l);
             }
         } else {
             if (!memory_access_is_direct(mr, is_write)) {
@@ -2093,8 +2127,7 @@ bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
                 }
             } else {
                 /* RAM case */
-                ptr = qemu_get_ram_ptr(mr->ram_addr + addr1);
-                memcpy(buf, ptr, l);
+                memory_region_xfer_from_ram(mr, buf, addr1, l);
             }
         }
         len -= l;
@@ -2132,9 +2165,9 @@ static inline void cpu_physical_memory_write_rom_internal(AddressSpace *as,
     hwaddr addr, const uint8_t *buf, int len, enum write_rom_type type)
 {
     hwaddr l;
-    uint8_t *ptr;
     hwaddr addr1;
     MemoryRegion *mr;
+    uint8_t *ptr;
 
     while (len > 0) {
         l = len;
@@ -2144,15 +2177,14 @@ static inline void cpu_physical_memory_write_rom_internal(AddressSpace *as,
               memory_region_is_romd(mr))) {
             /* do nothing */
         } else {
-            addr1 += memory_region_get_ram_addr(mr);
             /* ROM/RAM case */
-            ptr = qemu_get_ram_ptr(addr1);
             switch (type) {
             case WRITE_DATA:
-                memcpy(ptr, buf, l);
-                invalidate_and_set_dirty(addr1, l);
+                memory_region_xfer_to_ram(mr, addr1, buf, l);
                 break;
             case FLUSH_CACHE:
+                addr1 += memory_region_get_ram_addr(mr);
+                ptr = qemu_get_ram_ptr(addr1);
                 flush_icache_range((uintptr_t)ptr, (uintptr_t)ptr + l);
                 break;
             }
@@ -2371,6 +2403,15 @@ void cpu_physical_memory_unmap(void *buffer, hwaddr len,
                                int is_write, hwaddr access_len)
 {
     return address_space_unmap(&address_space_memory, buffer, len, is_write, access_len);
+}
+
+bool is_wrong_endian(enum device_endian endian)
+{
+#if defined(TARGET_WORDS_BIGENDIAN)
+    return (endian == DEVICE_LITTLE_ENDIAN);
+#else
+    return (endian == DEVICE_BIG_ENDIAN);
+#endif
 }
 
 /* warning: addr must be aligned */

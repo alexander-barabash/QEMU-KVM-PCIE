@@ -265,8 +265,10 @@ static QLIST_HEAD(, VFIOGroup)
  * initialized, this file descriptor is only released on QEMU exit and
  * we'll re-use it should another vfio device be attached before then.
  */
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
 static int vfio_kvm_device_fd = -1;
 #endif
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
 static void vfio_disable_interrupts(VFIODevice *vdev);
 static uint32_t vfio_pci_read_config(PCIDevice *pdev, uint32_t addr, int len);
@@ -3324,6 +3326,7 @@ static void vfio_pci_post_reset(VFIODevice *vdev)
     vfio_enable_intx(vdev);
 }
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
 static bool vfio_pci_host_match(PCIHostDeviceAddress *host1,
                                 PCIHostDeviceAddress *host2)
 {
@@ -3507,6 +3510,7 @@ out_single:
 
     return ret;
 }
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
 /*
  * We want to differentiate hot reset of mulitple in-use devices vs hot reset
@@ -3523,6 +3527,7 @@ out_single:
  * _one() will only do a hot reset for the one in-use devices case, calling
  * _multi() will do nothing if a _one() would have been sufficient.
  */
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
 static int vfio_pci_hot_reset_one(VFIODevice *vdev)
 {
     return vfio_pci_hot_reset(vdev, true);
@@ -3607,6 +3612,7 @@ static void vfio_kvm_device_del_group(VFIOGroup *group)
     }
 #endif
 }
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
 static VFIOAddressSpace *vfio_get_address_space(AddressSpace *as)
 {
@@ -3837,13 +3843,17 @@ static VFIOGroup *vfio_get_group(int groupid, AddressSpace *as)
         goto close_fd_exit;
     }
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
     if (QLIST_EMPTY(&group_list)) {
         qemu_register_reset(vfio_pci_reset_handler, NULL);
     }
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
     QLIST_INSERT_HEAD(&group_list, group, next);
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
     vfio_kvm_device_add_group(group);
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
     return group;
 
@@ -3862,16 +3872,20 @@ static void vfio_put_group(VFIOGroup *group)
         return;
     }
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
     vfio_kvm_device_del_group(group);
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
     vfio_disconnect_container(group);
     QLIST_REMOVE(group, next);
     DPRINTF("vfio_put_group: close group->fd\n");
     close(group->fd);
     g_free(group);
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
     if (QLIST_EMPTY(&group_list)) {
         qemu_unregister_reset(vfio_pci_reset_handler, NULL);
     }
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 }
 
 static int vfio_get_device(VFIOGroup *group, const char *name, VFIODevice *vdev)
@@ -4335,10 +4349,12 @@ static void vfio_pci_reset(DeviceState *dev)
         goto post_reset;
     }
 
+#ifdef VFIO_DEVICE_GET_PCI_HOT_RESET_INFO
     /* See if we can do our own bus reset */
     if (!vfio_pci_hot_reset_one(vdev)) {
         goto post_reset;
     }
+#endif /* VFIO_DEVICE_GET_PCI_HOT_RESET_INFO */
 
     /* If nothing else works and the device supports PM reset, use it */
     if (vdev->reset_works && vdev->has_pm_reset &&

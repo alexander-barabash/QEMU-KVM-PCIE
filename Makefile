@@ -68,7 +68,7 @@ Makefile: ;
 configure: ;
 
 .PHONY: all clean cscope distclean dvi html info install install-doc \
-	pdf recurse-all speed test dist
+	pdf recurse-all speed test dist compatibility install-compatibility
 
 $(call set-vpath, $(SRC_PATH))
 
@@ -181,7 +181,14 @@ subdir-dtc:dtc/libfdt dtc/tests
 dtc/%:
 	mkdir -p $@
 
-$(SUBDIR_RULES): libqemuutil.a libqemustub.a $(common-obj-y)
+compatibility:
+	cd compatibility && $(MAKE)
+
+install-compatibility: compatibility
+	$(INSTALL_DIR) "$(DESTDIR)$(libexecdir)"
+	$(INSTALL_PROG) $(STRIP_OPT) compatibility/qemu-compatibility.so "$(DESTDIR)$(libexecdir)"
+
+$(SUBDIR_RULES): libqemuutil.a libqemustub.a compatibility $(common-obj-y)
 
 ROMSUBDIR_RULES=$(patsubst %,romsubdir-%, $(ROMS))
 romsubdir-%:
@@ -384,7 +391,8 @@ install-sysconfig: install-datadir install-confdir
 	$(INSTALL_DATA) $(SRC_PATH)/sysconfigs/target/target-x86_64.conf "$(DESTDIR)$(qemu_confdir)"
 
 install: all $(if $(BUILD_DOCS),install-doc) install-sysconfig \
-install-datadir install-localstatedir
+install-datadir install-localstatedir install-compatibility
+	$(INSTALL_DIR) "$(DESTDIR)$(bindir)"
 ifneq ($(TOOLS),)
 	$(call install-prog,$(TOOLS),$(DESTDIR)$(bindir))
 endif

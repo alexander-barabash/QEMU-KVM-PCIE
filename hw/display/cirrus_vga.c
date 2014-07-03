@@ -633,7 +633,7 @@ static int cirrus_bitblt_common_patterncopy(CirrusVGAState * s,
 {
     uint8_t *dst;
 
-    dst = s->vga.vram_ptr + (s->cirrus_blt_dstaddr & s->cirrus_addr_mask);
+    dst = ACCESS_VRAM(&s->vga) + (s->cirrus_blt_dstaddr & s->cirrus_addr_mask);
 
     if (BLTUNSAFE(s))
         return 0;
@@ -656,7 +656,7 @@ static int cirrus_bitblt_solidfill(CirrusVGAState *s, int blt_rop)
     if (BLTUNSAFE(s))
         return 0;
     rop_func = cirrus_fill[rop_to_index[blt_rop]][s->cirrus_blt_pixelwidth - 1];
-    rop_func(s, s->vga.vram_ptr + (s->cirrus_blt_dstaddr & s->cirrus_addr_mask),
+    rop_func(s, ACCESS_VRAM(&s->vga) + (s->cirrus_blt_dstaddr & s->cirrus_addr_mask),
              s->cirrus_blt_dstpitch,
              s->cirrus_blt_width, s->cirrus_blt_height);
     cirrus_invalidate_region(s, s->cirrus_blt_dstaddr,
@@ -675,7 +675,7 @@ static int cirrus_bitblt_solidfill(CirrusVGAState *s, int blt_rop)
 static int cirrus_bitblt_videotovideo_patterncopy(CirrusVGAState * s)
 {
     return cirrus_bitblt_common_patterncopy(s,
-					    s->vga.vram_ptr + ((s->cirrus_blt_srcaddr & ~7) &
+					    ACCESS_VRAM(&s->vga) + ((s->cirrus_blt_srcaddr & ~7) &
                                             s->cirrus_addr_mask));
 }
 
@@ -727,9 +727,9 @@ static void cirrus_do_copy(CirrusVGAState *s, int dst, int src, int w, int h)
     if (notify)
         graphic_hw_update(s->vga.con);
 
-    (*s->cirrus_rop) (s, s->vga.vram_ptr +
+    (*s->cirrus_rop) (s, ACCESS_VRAM(&s->vga) +
 		      (s->cirrus_blt_dstaddr & s->cirrus_addr_mask),
-		      s->vga.vram_ptr +
+		      ACCESS_VRAM(&s->vga) +
 		      (s->cirrus_blt_srcaddr & s->cirrus_addr_mask),
 		      s->cirrus_blt_dstpitch, s->cirrus_blt_srcpitch,
 		      s->cirrus_blt_width, s->cirrus_blt_height);
@@ -781,7 +781,7 @@ static void cirrus_bitblt_cputovideo_next(CirrusVGAState * s)
         } else {
             /* at least one scan line */
             do {
-                (*s->cirrus_rop)(s, s->vga.vram_ptr +
+                (*s->cirrus_rop)(s, ACCESS_VRAM(&s->vga) +
                                  (s->cirrus_blt_dstaddr & s->cirrus_addr_mask),
                                   s->cirrus_bltbuf, 0, 0, s->cirrus_blt_width, 1);
                 cirrus_invalidate_region(s, s->cirrus_blt_dstaddr, 0,
@@ -1913,7 +1913,7 @@ static void cirrus_mem_writeb_mode4and5_8bpp(CirrusVGAState * s,
     unsigned val = mem_value;
     uint8_t *dst;
 
-    dst = s->vga.vram_ptr + (offset &= s->cirrus_addr_mask);
+    dst = ACCESS_VRAM(&s->vga) + (offset &= s->cirrus_addr_mask);
     for (x = 0; x < 8; x++) {
 	if (val & 0x80) {
 	    *dst = s->cirrus_shadow_gr1;
@@ -1935,7 +1935,7 @@ static void cirrus_mem_writeb_mode4and5_16bpp(CirrusVGAState * s,
     unsigned val = mem_value;
     uint8_t *dst;
 
-    dst = s->vga.vram_ptr + (offset &= s->cirrus_addr_mask);
+    dst = ACCESS_VRAM(&s->vga) + (offset &= s->cirrus_addr_mask);
     for (x = 0; x < 8; x++) {
 	if (val & 0x80) {
 	    *dst = s->cirrus_shadow_gr1;
@@ -1982,7 +1982,7 @@ static uint64_t cirrus_vga_mem_read(void *opaque,
 		bank_offset <<= 3;
 	    }
 	    bank_offset &= s->cirrus_addr_mask;
-	    val = *(s->vga.vram_ptr + bank_offset);
+	    val = *(ACCESS_VRAM(&s->vga) + bank_offset);
 	} else
 	    val = 0xff;
     } else if (addr >= 0x18000 && addr < 0x18100) {
@@ -2036,7 +2036,7 @@ static void cirrus_vga_mem_write(void *opaque,
 		bank_offset &= s->cirrus_addr_mask;
 		mode = s->vga.gr[0x05] & 0x7;
 		if (mode < 4 || mode > 5 || ((s->vga.gr[0x0B] & 0x4) == 0)) {
-		    *(s->vga.vram_ptr + bank_offset) = mem_value;
+		    *(ACCESS_VRAM(&s->vga) + bank_offset) = mem_value;
                     memory_region_set_dirty(&s->vga.vram, bank_offset,
                                             sizeof(mem_value));
 		} else {
@@ -2096,7 +2096,7 @@ static inline void cirrus_cursor_compute_yrange(CirrusVGAState *s)
     uint32_t content;
     int y, y_min, y_max;
 
-    src = s->vga.vram_ptr + s->real_vram_size - 16 * 1024;
+    src = ACCESS_VRAM(&s->vga) + s->real_vram_size - 16 * 1024;
     if (s->vga.sr[0x12] & CIRRUS_CURSOR_LARGE) {
         src += (s->vga.sr[0x13] & 0x3c) * 256;
         y_min = 64;
@@ -2200,7 +2200,7 @@ static void cirrus_cursor_draw_line(VGACommonState *s1, uint8_t *d1, int scr_y)
         scr_y >= (s->hw_cursor_y + h))
         return;
 
-    src = s->vga.vram_ptr + s->real_vram_size - 16 * 1024;
+    src = ACCESS_VRAM(&s->vga) + s->real_vram_size - 16 * 1024;
     if (s->vga.sr[0x12] & CIRRUS_CURSOR_LARGE) {
         src += (s->vga.sr[0x13] & 0x3c) * 256;
         src += (scr_y - s->hw_cursor_y) * 16;
@@ -2284,7 +2284,7 @@ static uint64_t cirrus_linear_read(void *opaque, hwaddr addr,
 	    addr <<= 3;
 	}
 	addr &= s->cirrus_addr_mask;
-	ret = *(s->vga.vram_ptr + addr);
+	ret = *(ACCESS_VRAM(&s->vga) + addr);
     }
 
     return ret;
@@ -2319,7 +2319,7 @@ static void cirrus_linear_write(void *opaque, hwaddr addr,
 
 	mode = s->vga.gr[0x05] & 0x7;
 	if (mode < 4 || mode > 5 || ((s->vga.gr[0x0B] & 0x4) == 0)) {
-	    *(s->vga.vram_ptr + addr) = (uint8_t) val;
+	    *(ACCESS_VRAM(&s->vga) + addr) = (uint8_t) val;
             memory_region_set_dirty(&s->vga.vram, addr, 1);
 	} else {
 	    if ((s->vga.gr[0x0B] & 0x14) != 0x14) {
