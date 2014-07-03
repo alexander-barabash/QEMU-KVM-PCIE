@@ -35,6 +35,7 @@
 #include "exec/ram_addr.h"
 #include "exec/address-spaces.h"
 #include "qemu/event_notifier.h"
+#include "qemu/pump.h"
 #include "trace.h"
 
 #include "hw/boards.h"
@@ -74,6 +75,22 @@ typedef struct KVMSlot
 
 typedef struct kvm_dirty_log KVMDirtyLog;
 
+struct KVMCPUState
+{
+    struct qemu_pump debug_pump;
+    struct qemu_pump record_pump[32];
+    struct qemu_pump replay_pump[32];
+    int rkvm_debug_fd;
+    bool record_execution;
+    bool replay_execution;
+    struct qemu_mapped_file record_io_file;
+    struct qemu_mapped_file record_mmio_file;
+    struct qemu_mapped_file replay_io_file;
+    struct qemu_mapped_file replay_mmio_file;
+    int record_pump_count;
+    int replay_pump_count;
+};
+
 struct KVMState
 {
     KVMSlot *slots;
@@ -108,7 +125,22 @@ struct KVMState
     QTAILQ_HEAD(msi_hashtab, KVMMSIRoute) msi_hashtab[KVM_MSI_HASHTAB_SIZE];
     bool direct_msi;
 #endif
+    GMutex rkvm_mutex;
+    bool use_rkvm_mutex;
+    bool has_preemption_timer;
+    bool rkvm_debug;
+    bool rkvm_dump;
+    bool record_kvm_execution;
+    bool replay_kvm_execution;
+    char *rkvm_debug_directory;
+    char *rkvm_dump_directory;
+    char *record_directory;
+    char *replay_directory;
+    int preemption_timer_rate;
+    struct KVMCPUState dma_cpu;
 };
+
+static void pump_streams(struct KVMCPUState *kvm_cpu_state);
 
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
@@ -226,6 +258,109 @@ static int kvm_set_user_memory_region(KVMState *s, KVMSlot *slot)
     return kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
 }
 
+static void open_debug_stream(KVMState *s,
+                              struct KVMCPUState *kvm_cpu_state,
+                              int rkvm_debug_fd,
+                              int cpu_index)
+{
+    if (rkvm_debug_fd > 0) {
+        char *filename = (char *)malloc(strlen(s->rkvm_debug_directory) + 48);
+        int fd;
+        sprintf(filename, "%s/rkvm-debug-cpu%d", s->rkvm_debug_directory, cpu_index);
+        fd = open(filename,
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd > 0) {
+            qemu_init_pump(&kvm_cpu_state->debug_pump,
+                           rkvm_debug_fd, false, fd, true);
+        } else {
+            perror("Could not open debug file");
+            close(rkvm_debug_fd);
+        }
+    }
+}
+
+static void open_record_streams(KVMState *s,
+                                struct KVMCPUState *kvm_cpu_state,
+                                struct rkvm_stream_fds *stream_fds,
+                                int cpu_index)
+{
+    int i;
+    char *filename = (char *)malloc(strlen(s->record_directory) + 48);
+    int fd;
+    sprintf(filename, "%s/rkvm-io-cpu%d", s->record_directory, cpu_index);
+    fd = open(filename,
+              O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        perror("Could not open record file");
+        exit(1);
+    }
+    qemu_init_mapped_file(&kvm_cpu_state->record_io_file, fd);
+    sprintf(filename, "%s/rkvm-mmio-cpu%d", s->record_directory, cpu_index);
+    fd = open(filename,
+              O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        perror("Could not open record file");
+        exit(1);
+    }
+    qemu_init_mapped_file(&kvm_cpu_state->record_mmio_file, fd);
+    for (i = 0; i < stream_fds->count; ++i) {
+        sprintf(filename, "%s/rkvm-cpu%d-%s", s->record_directory,
+                cpu_index, stream_fds->name[i]);
+        fd = open(filename,
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            perror("Could not open record file");
+            exit(1);
+        }
+        qemu_init_pump(&kvm_cpu_state->record_pump[i],
+                       stream_fds->fd[i], false, fd, true);
+    }
+    free(filename);
+    kvm_cpu_state->record_pump_count = stream_fds->count;
+    kvm_cpu_state->record_execution = true;
+}
+
+static void open_replay_streams(KVMState *s,
+                                struct KVMCPUState *kvm_cpu_state,
+                                struct rkvm_stream_fds *stream_fds,
+                                int cpu_index)
+{
+    int i;
+    char *filename = (char *)malloc(strlen(s->replay_directory) + 48);
+    int fd;
+    sprintf(filename, "%s/rkvm-io-cpu%d", s->replay_directory, cpu_index);
+    fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Opening %s\n", filename);
+        perror("Could not open replay file");
+        exit(1);
+    }
+    qemu_init_mapped_file(&kvm_cpu_state->replay_io_file, fd);
+    sprintf(filename, "%s/rkvm-mmio-cpu%d", s->replay_directory, cpu_index);
+    fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Opening %s\n", filename);
+        perror("Could not open replay file");
+        exit(1);
+    }
+    qemu_init_mapped_file(&kvm_cpu_state->replay_mmio_file, fd);
+    for (i = 0; i < stream_fds->count; ++i) {
+        sprintf(filename, "%s/rkvm-cpu%d-%s", s->replay_directory,
+                cpu_index, stream_fds->name[i]);
+        fd = open(filename, O_RDONLY);
+        if (fd < 0) {
+            fprintf(stderr, "Opening %s\n", filename);
+            perror("Could not open replay file");
+            exit(1);
+        }
+        qemu_init_pump(&kvm_cpu_state->replay_pump[i],
+                       fd, true, stream_fds->fd[i], false);
+    }
+    free(filename);
+    kvm_cpu_state->replay_pump_count = stream_fds->count;
+    kvm_cpu_state->replay_execution = true;
+}
+
 int kvm_init_vcpu(CPUState *cpu)
 {
     KVMState *s = kvm_state;
@@ -242,6 +377,8 @@ int kvm_init_vcpu(CPUState *cpu)
 
     cpu->kvm_fd = ret;
     cpu->kvm_state = s;
+    cpu->kvm_cpu_state = (struct KVMCPUState *)g_malloc0(sizeof(struct KVMCPUState));
+    /* TODO: Need to handle deallocation and reset of cpu->kvm_cpu_state. */
     cpu->kvm_vcpu_dirty = true;
 
     mmap_size = kvm_ioctl(s, KVM_GET_VCPU_MMAP_SIZE, 0);
@@ -265,6 +402,45 @@ int kvm_init_vcpu(CPUState *cpu)
     }
 
     ret = kvm_arch_init_vcpu(cpu);
+
+    if (s->rkvm_debug) {
+        int rkvm_debug_fd = kvm_vcpu_ioctl(cpu, RKVM_OPEN_DEBUG_STREAM, 0);
+        if (rkvm_debug_fd > 0) {
+            open_debug_stream(s,
+                              cpu->kvm_cpu_state,
+                              rkvm_debug_fd,
+                              cpu->cpu_index);
+        } else {
+                perror("Could not open debug stream");
+                exit(1);
+        }
+    }
+    {
+        struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
+        struct rkvm_stream_fds stream_fds;
+        if (s->record_kvm_execution) {
+            if (kvm_vcpu_ioctl(cpu, RKVM_OPEN_RECORD_STREAMS, &stream_fds) == 0) {
+                open_record_streams(s, kvm_cpu_state, &stream_fds, cpu->cpu_index);
+            } else {
+                perror("Could not open record streams");
+                exit(1);
+            }
+        } else {
+            kvm_cpu_state->record_pump_count = 0;
+        }
+
+        if (s->replay_kvm_execution) {
+            if (kvm_vcpu_ioctl(cpu, RKVM_OPEN_REPLAY_STREAMS, &stream_fds) == 0) {
+                open_replay_streams(s, kvm_cpu_state, &stream_fds, cpu->cpu_index);
+            } else {
+                perror("Could not open replay streams");
+                exit(1);
+            }
+        } else {
+            kvm_cpu_state->replay_pump_count = 0;
+        }
+    }
+    fprintf(stderr, "KVM_GET_TSC_KHZ = %d\n", kvm_vcpu_ioctl(cpu, KVM_GET_TSC_KHZ, 0));
 err:
     return ret;
 }
@@ -602,6 +778,8 @@ kvm_check_extension_list(KVMState *s, const KVMCapabilityInfo *list)
     return NULL;
 }
 
+extern int memory_region_get_ram_ptr_ok;
+extern int qemu_get_ram_ptr_ok;
 static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
 {
     KVMState *s = kvm_state;
@@ -639,7 +817,11 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
         }
     }
 
+    qemu_get_ram_ptr_ok = 1;
+    memory_region_get_ram_ptr_ok = 1;
     ram = memory_region_get_ram_ptr(mr) + section->offset_within_region + delta;
+    memory_region_get_ram_ptr_ok = 0;
+    qemu_get_ram_ptr_ok = 0;
 
     while (1) {
         mem = kvm_lookup_overlapping_slot(s, start_addr, start_addr + size);
@@ -1241,6 +1423,7 @@ static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int rfd, int virq,
 
 int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter)
 {
+#ifdef KVM_IRQ_ROUTING_S390_ADAPTER
     struct kvm_irq_routing_entry kroute;
     int virq;
 
@@ -1266,6 +1449,9 @@ int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter)
     kvm_irqchip_commit_routes(s);
 
     return virq;
+#else
+    return -ENOSYS;
+#endif
 }
 
 #else /* !KVM_CAP_IRQ_ROUTING */
@@ -1323,7 +1509,12 @@ static int kvm_irqchip_create(KVMState *s)
 
     if (!qemu_opt_get_bool(qemu_get_machine_opts(), "kernel_irqchip", true) ||
         (!kvm_check_extension(s, KVM_CAP_IRQCHIP) &&
-         (kvm_vm_enable_cap(s, KVM_CAP_S390_IRQCHIP, 0) < 0))) {
+#ifdef KVM_CAP_S390_IRQCHIP
+         (kvm_vm_enable_cap(s, KVM_CAP_S390_IRQCHIP, 0) < 0)
+#else
+         true
+#endif
+)) {
         return 0;
     }
 
@@ -1366,6 +1557,16 @@ static int kvm_max_vcpus(KVMState *s)
 {
     int ret = kvm_check_extension(s, KVM_CAP_MAX_VCPUS);
     return (ret) ? ret : kvm_recommended_vcpus(s);
+}
+
+static void kvm_init_preemption_timer_caps(KVMState *s)
+{
+    s->has_preemption_timer =
+        kvm_check_extension(s, KVM_CAP_PREEMPTION_TIMER) != 0;
+    if (s->has_preemption_timer) {
+        s->preemption_timer_rate =
+            kvm_check_extension(s, KVM_CAP_PREEMPTION_TIMER_RATE);
+    }
 }
 
 int kvm_init(MachineClass *mc)
@@ -1427,6 +1628,8 @@ int kvm_init(MachineClass *mc)
         goto err;
     }
 
+    kvm_init_preemption_timer_caps(s);
+
     s->nr_slots = kvm_check_extension(s, KVM_CAP_NR_MEMSLOTS);
 
     /* If unspecified, use the default value */
@@ -1486,6 +1689,66 @@ int kvm_init(MachineClass *mc)
     }
 
     s->vmfd = ret;
+
+    if (s->has_preemption_timer) {
+        __u32 execution_mode = 0;
+        int quantum;
+        char *KVM_PREEMPTION_QUANTUM = getenv("KVM_PREEMPTION_QUANTUM");
+        char *KVM_PREEMPTION_SEQUENTIAL = getenv("KVM_PREEMPTION_SEQUENTIAL");
+        char *KVM_REPLAY = getenv("KVM_REPLAY");
+        char *KVM_RECORD = getenv("KVM_RECORD");
+        char *KVM_LOCKSTEP = getenv("KVM_LOCKSTEP");
+        char *RKVM_DEBUG = getenv("RKVM_DEBUG");
+        char *RKVM_DUMP = getenv("RKVM_DUMP");
+        if (RKVM_DEBUG && *RKVM_DEBUG) {
+            s->rkvm_debug = true;
+            s->rkvm_debug_directory = strdup(RKVM_DEBUG);
+            mkdir(s->rkvm_debug_directory, 0777);
+        }
+        if (RKVM_DUMP && *RKVM_DUMP) {
+            s->rkvm_dump = true;
+            s->rkvm_dump_directory = strdup(RKVM_DUMP);
+            mkdir(s->rkvm_dump_directory, 0777);
+        }
+        if (KVM_LOCKSTEP && *KVM_LOCKSTEP) {
+            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
+            s->use_rkvm_mutex = true;
+        }
+        if (KVM_RECORD && *KVM_RECORD) {
+            execution_mode |= RKVM_EXECUTION_MODE_RECORD;
+            s->record_kvm_execution = true;
+            s->record_directory = strdup(KVM_RECORD);
+            mkdir(s->record_directory, 0777);
+            s->use_rkvm_mutex = true;
+        }
+        if (KVM_REPLAY && *KVM_REPLAY) {
+            execution_mode |= RKVM_EXECUTION_MODE_REPLAY;
+            s->replay_kvm_execution = true;
+            s->replay_directory = strdup(KVM_REPLAY);
+            s->use_rkvm_mutex = true;
+        }
+        if (KVM_PREEMPTION_QUANTUM) {
+            quantum = atoi(KVM_PREEMPTION_QUANTUM) >> (s->preemption_timer_rate);
+        } else if(!KVM_REPLAY || !*KVM_REPLAY) {
+            quantum = 512;
+        } else {
+            quantum = 0;
+        }
+        if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
+            (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
+            execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
+            s->use_rkvm_mutex = true;
+        }
+        s->use_rkvm_mutex = false; // This mutex was a bad idea.
+        if (s->use_rkvm_mutex) {
+            g_mutex_init(&s->rkvm_mutex);
+        }
+        if(quantum > 0) {
+            kvm_vm_ioctl(s, RKVM_SET_TIMER_QUANTUM, &quantum);
+        }
+        kvm_vm_ioctl(s, RKVM_SET_EXECUTION_FLAG, &execution_mode);
+    }
+
     missing_cap = kvm_check_extension_list(s, kvm_required_capabilites);
     if (!missing_cap) {
         missing_cap =
@@ -1566,6 +1829,47 @@ int kvm_init(MachineClass *mc)
 
     cpu_interrupt_handler = kvm_handle_interrupt;
 
+
+#define DMA_CPU_INDEX 1024
+    /* RKVM DMA INIT */
+    if (s->rkvm_debug) {
+        int rkvm_debug_fd = kvm_vm_ioctl(s, RKVM_OPEN_DEBUG_STREAM, 0);
+        if (rkvm_debug_fd > 0) {
+            open_debug_stream(s,
+                              &s->dma_cpu,
+                              rkvm_debug_fd,
+                              DMA_CPU_INDEX);
+        } else {
+            perror("Could not open DMA debug stream");
+            exit(1);
+        }
+    }
+    {
+        struct KVMCPUState *kvm_cpu_state = &s->dma_cpu;
+        struct rkvm_stream_fds stream_fds;
+        if (s->record_kvm_execution) {
+            if (kvm_vm_ioctl(s, RKVM_OPEN_RECORD_STREAMS, &stream_fds) == 0) {
+                open_record_streams(s, kvm_cpu_state, &stream_fds, DMA_CPU_INDEX);
+            } else {
+                perror("Could not open DMA record streams");
+                exit(1);
+            }
+        } else {
+            kvm_cpu_state->record_pump_count = 0;
+        }
+
+        if (s->replay_kvm_execution) {
+            if (kvm_vm_ioctl(s, RKVM_OPEN_REPLAY_STREAMS, &stream_fds) == 0) {
+                open_replay_streams(s, kvm_cpu_state, &stream_fds, DMA_CPU_INDEX);
+            } else {
+                perror("Could not open DMA replay streams");
+                exit(1);
+            }
+        } else {
+            kvm_cpu_state->replay_pump_count = 0;
+        }
+    }
+
     return 0;
 
 err:
@@ -1626,6 +1930,29 @@ static int kvm_handle_internal_error(CPUState *cpu, struct kvm_run *run)
     return -1;
 }
 
+static void flush_coalesced_lock(KVMState *s)
+{
+#if 0
+    __u32 lock = 1;
+    int r;
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
+        return;
+    do {
+        r = kvm_vm_ioctl(s, RKVM_FLUSH_COALESCED, &lock);
+    } while (r == -EAGAIN);
+#endif
+}
+
+static void flush_coalesced_unlock(KVMState *s)
+{
+#if 0
+    __u32 lock = 0;
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
+        return;
+    kvm_vm_ioctl(s, RKVM_FLUSH_COALESCED, &lock);
+#endif
+}
+
 void kvm_flush_coalesced_mmio_buffer(void)
 {
     KVMState *s = kvm_state;
@@ -1635,18 +1962,20 @@ void kvm_flush_coalesced_mmio_buffer(void)
     }
 
     s->coalesced_flush_in_progress = true;
-
+ 
     if (s->coalesced_mmio_ring) {
         struct kvm_coalesced_mmio_ring *ring = s->coalesced_mmio_ring;
+        flush_coalesced_lock(s);
         while (ring->first != ring->last) {
             struct kvm_coalesced_mmio *ent;
-
+            
             ent = &ring->coalesced_mmio[ring->first];
 
             cpu_physical_memory_write(ent->phys_addr, ent->data, ent->len);
             smp_wmb();
             ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
         }
+        flush_coalesced_unlock(s);
     }
 
     s->coalesced_flush_in_progress = false;
@@ -1681,8 +2010,48 @@ void kvm_cpu_synchronize_post_init(CPUState *cpu)
     cpu->kvm_vcpu_dirty = false;
 }
 
+static void pump_streams(struct KVMCPUState *kvm_cpu_state)
+{
+    int i;
+    pump_data(&kvm_cpu_state->debug_pump);
+    for (i = 0; i < kvm_cpu_state->record_pump_count; ++i) {
+        pump_data(&kvm_cpu_state->record_pump[i]);
+    }
+    for (i = 0; i < kvm_cpu_state->replay_pump_count; ++i) {
+        pump_data(&kvm_cpu_state->replay_pump[i]);
+    }
+}
+
+static bool ignore_port_in_replay(int port)
+{
+#if 0
+    switch (port) {
+    case 112: /* rtc */
+    case 113: /* rtc */
+    case 146: /* port92 */
+        //case 0xcf8: /* pci */
+        //case 0xcf9: /* pci */
+        //case 0xcfa: /* pci */
+        //case 0xcfb: /* pci */
+        //case 0xcfc: /* pci */
+        //case 0xcfd: /* pci */
+        //case 0xcfe: /* pci */
+        //case 0xcff: /* pci */
+        return true;
+    default:
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
+extern int (*pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len);
+extern void *kvm_xfer_data;
+
 int kvm_cpu_exec(CPUState *cpu)
 {
+    KVMState *s = kvm_state;
     struct kvm_run *run = cpu->kvm_run;
     int ret, run_ret;
 
@@ -1694,6 +2063,29 @@ int kvm_cpu_exec(CPUState *cpu)
     }
 
     do {
+        if (s->rkvm_dump) {
+            if (run->rkvm_vcpu_debug_data.cnt % 1000 == 999) {
+                char dumpfile[200];
+                uint8_t *buf = malloc(0x100000);
+                int fd;
+                int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
+                sprintf(dumpfile, "%s/dump-%d",
+                        s->rkvm_dump_directory,
+                        (int)run->rkvm_vcpu_debug_data.cnt / 1000);
+                unlink(dumpfile);
+                fd = open(dumpfile,
+                          O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+                pkvm_xfer = NULL;
+                qemu_get_ram_ptr_ok = 1;
+                address_space_read(&address_space_memory, 0, buf, 0x100000);
+                qemu_get_ram_ptr_ok = 0;
+                pkvm_xfer = save_pkvm_xfer;
+                write(fd, buf, 0x100000);
+                close(fd);
+                free(buf);
+            }
+        }
+        pump_streams(cpu->kvm_cpu_state);
         if (cpu->kvm_vcpu_dirty) {
             kvm_arch_put_registers(cpu, KVM_PUT_RUNTIME_STATE);
             cpu->kvm_vcpu_dirty = false;
@@ -1711,7 +2103,13 @@ int kvm_cpu_exec(CPUState *cpu)
         }
         qemu_mutex_unlock_iothread();
 
+        if (s->use_rkvm_mutex) {
+            g_mutex_lock(&s->rkvm_mutex);
+        }
         run_ret = kvm_vcpu_ioctl(cpu, KVM_RUN, 0);
+        if (s->use_rkvm_mutex) {
+            g_mutex_unlock(&s->rkvm_mutex);
+        }
 
         qemu_mutex_lock_iothread();
         kvm_arch_post_run(cpu, run);
@@ -1729,23 +2127,70 @@ int kvm_cpu_exec(CPUState *cpu)
 
         trace_kvm_run_exit(cpu->cpu_index, run->exit_reason);
         switch (run->exit_reason) {
-        case KVM_EXIT_IO:
+        case KVM_EXIT_IO: {
+            struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
+            uint8_t *data = (uint8_t *)run + run->io.data_offset;
+            int direction = run->io.direction;
+            int size = run->io.size;
+            uint32_t count = run->io.count;
             DPRINTF("handle_io\n");
-            kvm_handle_io(run->io.port,
-                          (uint8_t *)run + run->io.data_offset,
-                          run->io.direction,
-                          run->io.size,
-                          run->io.count);
+            if (!kvm_cpu_state->replay_execution || !ignore_port_in_replay(run->io.port)) {
+                kvm_handle_io(run->io.port,
+                              data,
+                              direction,
+                              size,
+                              count);
+            }
+            if (direction != KVM_EXIT_IO_OUT) {
+                if (kvm_cpu_state->replay_execution) {
+                    //uint8_t buffer[size * count];
+                    //memcpy(buffer, data, size * count);
+                    qemu_mapped_read(data, size * count, &kvm_cpu_state->replay_io_file);
+                    /*
+                    if (memcmp(buffer, data, size * count)) {
+                        fprintf(stderr, "Changed I/O on port %d\n", run->io.port);
+                    }
+                    */
+                }
+                if (kvm_cpu_state->record_execution) {
+                    qemu_mapped_write(data, size * count, &kvm_cpu_state->record_io_file);
+                }
+            }
             ret = 0;
             break;
-        case KVM_EXIT_MMIO:
+        }
+        case KVM_EXIT_MMIO: {
+            struct KVMCPUState *kvm_cpu_state = cpu->kvm_cpu_state;
+            void *data = run->mmio.data;
+            uint32_t len = run->mmio.len;
+            bool is_write = (run->mmio.is_write != 0);
+            bool is_internal = false; // (run->mmio.is_internal != 0);
             DPRINTF("handle_mmio\n");
             cpu_physical_memory_rw(run->mmio.phys_addr,
-                                   run->mmio.data,
-                                   run->mmio.len,
-                                   run->mmio.is_write);
+                                   data,
+                                   len,
+                                   is_write);
+            if (!is_internal) {
+                if (!is_write) {
+                    if (kvm_cpu_state->replay_execution) {
+                        //uint8_t buffer[len];
+                        //memcpy(buffer, data, len);
+                        qemu_mapped_read(data, len, &kvm_cpu_state->replay_mmio_file);
+                        /*
+                        if (memcmp(buffer, data, len)) {
+                            fprintf(stderr, "Changed MMIO at address 0x%llx\n",
+                                    (long long)run->mmio.phys_addr);
+                        }
+                        */
+                    }
+                    if (kvm_cpu_state->record_execution) {
+                        qemu_mapped_write(data, len, &kvm_cpu_state->record_mmio_file);
+                    }
+                }
+            }
             ret = 0;
             break;
+        }
         case KVM_EXIT_IRQ_WINDOW_OPEN:
             DPRINTF("irq_window_open\n");
             ret = EXCP_INTERRUPT;
@@ -1763,6 +2208,7 @@ int kvm_cpu_exec(CPUState *cpu)
         case KVM_EXIT_INTERNAL_ERROR:
             ret = kvm_handle_internal_error(cpu, run);
             break;
+#ifdef KVM_EXIT_SYSTEM_EVENT
         case KVM_EXIT_SYSTEM_EVENT:
             switch (run->system_event.type) {
             case KVM_SYSTEM_EVENT_SHUTDOWN:
@@ -1779,12 +2225,15 @@ int kvm_cpu_exec(CPUState *cpu)
                 break;
             }
             break;
+#endif
         default:
             DPRINTF("kvm_arch_handle_exit\n");
             ret = kvm_arch_handle_exit(cpu, run);
             break;
         }
     } while (ret == 0);
+
+    pump_streams(cpu->kvm_cpu_state);
 
     if (ret < 0) {
         cpu_dump_state(cpu, stderr, fprintf, CPU_DUMP_CODE);
@@ -2197,4 +2646,135 @@ int kvm_get_one_reg(CPUState *cs, uint64_t id, void *target)
         trace_kvm_failed_reg_get(id, strerror(r));
     }
     return r;
+}
+
+static void kvm_userspace_entry(struct rkvm_userspace_data *preemption_data) {
+    KVMState *s = kvm_state;
+    kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
+    printf("kvm_userspace_entry at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+}
+
+static void kvm_userspace_exit(struct rkvm_userspace_data *preemption_data) {
+    KVMState *s = kvm_state;
+    kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
+    printf("kvm_userspace_exit at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+}
+
+static void kvm_userspace_spend(struct rkvm_userspace_data *preemption_data, unsigned time) {
+    KVMState *s = kvm_state;
+    preemption_data->accumulate_preemption_timer +=
+        (time + (1 << s->preemption_timer_rate) - 1) >> s->preemption_timer_rate;
+}
+
+static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
+{
+    int r = 0;
+    KVMState *s = kvm_state;
+    struct rkvm_xfer rkvm_xfer;
+
+    if (len < 0)
+        return -1;
+
+    if (!s->record_kvm_execution && !s->replay_kvm_execution)
+        return -1;
+
+    fprintf(stderr, "kvm_xfer of size %d\n", len);
+    
+    if (s->rkvm_dump) {
+        static int cnt = 0;
+        char dumpfile[200];
+        uint8_t *buf = malloc(0x100000);
+        int fd;
+        int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
+
+        sprintf(dumpfile, "%s/pre-dma-dump-%d",
+                s->rkvm_dump_directory,
+                ++cnt);
+        unlink(dumpfile);
+        fd = open(dumpfile,
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+        pkvm_xfer = NULL;
+        qemu_get_ram_ptr_ok = 1;
+        address_space_read(&address_space_memory, 0, buf, 0x100000);
+        qemu_get_ram_ptr_ok = 0;
+        pkvm_xfer = save_pkvm_xfer;
+        write(fd, buf, 0x100000);
+        close(fd);
+        free(buf);
+    }
+
+    while ((r >= 0) && (len > 4)) {
+        rkvm_xfer.size = 4;
+        rkvm_xfer.dest = dest;
+        rkvm_xfer.src = src;
+        pump_streams(&s->dma_cpu);
+        if (s->use_rkvm_mutex) {
+            g_mutex_lock(&s->rkvm_mutex);
+        }
+        r = kvm_vm_ioctl(s, RKVM_XFER, &rkvm_xfer);
+        if (s->use_rkvm_mutex) {
+            g_mutex_unlock(&s->rkvm_mutex);
+        }
+        if (r >= 0) {
+            dest += 4;
+            src += 4;
+            len -= 4;
+        } else if (r == -EAGAIN) {
+            r = 0;
+        }
+    }
+    if (r >= 0) {
+        rkvm_xfer.size = len;
+        rkvm_xfer.dest = dest;
+        rkvm_xfer.src = src;
+        do {
+            pump_streams(&s->dma_cpu);
+            if (s->use_rkvm_mutex) {
+                g_mutex_lock(&s->rkvm_mutex);
+            }
+            r = kvm_vm_ioctl(s, RKVM_XFER, &rkvm_xfer);
+            if (s->use_rkvm_mutex) {
+                g_mutex_unlock(&s->rkvm_mutex);
+            }
+        } while (r == -EAGAIN);
+    }
+    pump_streams(&s->dma_cpu);
+
+    if (s->rkvm_dump) {
+        static int cnt = 0;
+        char dumpfile[200];
+        uint8_t *buf = malloc(0x100000);
+        int fd;
+        int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
+        sprintf(dumpfile, "%s/dma-dump-%d",
+                s->rkvm_dump_directory,
+                ++cnt);
+        unlink(dumpfile);
+        fd = open(dumpfile,
+                  O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+        pkvm_xfer = NULL;
+        qemu_get_ram_ptr_ok = 1;
+        address_space_read(&address_space_memory, 0, buf, 0x100000);
+        qemu_get_ram_ptr_ok = 0;
+        pkvm_xfer = save_pkvm_xfer;
+        write(fd, buf, 0x100000);
+        close(fd);
+        free(buf);
+    }
+
+    fprintf(stderr, "kvm_xfer DONE\n");
+    return r;
+}
+
+extern void (*pkvm_userspace_entry)(struct rkvm_userspace_data *);
+extern void (*pkvm_userspace_exit)(struct rkvm_userspace_data *);
+extern void (*pkvm_userspace_spend)(struct rkvm_userspace_data *preemption_data, unsigned time);
+
+static void __attribute__((constructor)) rkvm_init(void) {
+    pkvm_xfer = &kvm_xfer;
+    kvm_xfer_data = &kvm_state;
+
+    pkvm_userspace_entry = kvm_userspace_entry;
+    pkvm_userspace_exit = kvm_userspace_exit;
+    pkvm_userspace_spend = kvm_userspace_spend;
 }

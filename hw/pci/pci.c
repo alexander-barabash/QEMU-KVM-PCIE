@@ -51,12 +51,20 @@ static void pcibus_reset(BusState *qbus);
 
 static Property pci_props[] = {
     DEFINE_PROP_PCI_DEVFN("addr", PCIDevice, devfn, -1),
+    DEFINE_PROP_STRING("slot", PCIDevice, slot_name),
     DEFINE_PROP_STRING("romfile", PCIDevice, romfile),
     DEFINE_PROP_UINT32("rombar",  PCIDevice, rom_bar, 1),
     DEFINE_PROP_BIT("multifunction", PCIDevice, cap_present,
                     QEMU_PCI_CAP_MULTIFUNCTION_BITNR, false),
     DEFINE_PROP_BIT("command_serr_enable", PCIDevice, cap_present,
                     QEMU_PCI_CAP_SERR_BITNR, true),
+    DEFINE_PROP_BIT("msi", PCIDevice, cap_present,
+                    QEMU_PCI_CAP_MSI_BITNR, false),
+    DEFINE_PROP_BIT("msix", PCIDevice, cap_present,
+                    QEMU_PCI_CAP_MSIX_BITNR, false),
+    DEFINE_PROP_UINT16("ari_cap", PCIDevice, ari_cap, 0),
+    DEFINE_PROP_UINT8("msi_cap", PCIDevice, msi_cap, 0),
+    DEFINE_PROP_UINT8("msix_cap", PCIDevice, msix_cap, 0),
     DEFINE_PROP_END_OF_LIST()
 };
 
@@ -410,6 +418,9 @@ static int get_pci_config_device(QEMUFile *f, void *pv, size_t size)
     }
 
     memory_region_set_enabled(&s->bus_master_enable_region,
+                              pci_get_word(s->config + PCI_COMMAND)
+                              & PCI_COMMAND_MASTER);
+    memory_region_set_enabled(&s->bus_master_io_enable_region,
                               pci_get_word(s->config + PCI_COMMAND)
                               & PCI_COMMAND_MASTER);
 
@@ -800,6 +811,9 @@ static void do_pci_unregister_device(PCIDevice *pci_dev)
 
     address_space_destroy(&pci_dev->bus_master_as);
     memory_region_destroy(&pci_dev->bus_master_enable_region);
+
+    address_space_destroy(&pci_dev->bus_master_io_as);
+    memory_region_destroy(&pci_dev->bus_master_io_enable_region);
 }
 
 /* -1 for devfn means auto assign */
@@ -809,13 +823,49 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     PCIDeviceClass *pc = PCI_DEVICE_GET_CLASS(pci_dev);
     PCIConfigReadFunc *config_read = pc->config_read;
     PCIConfigWriteFunc *config_write = pc->config_write;
+    int index;
     AddressSpace *dma_as;
+    AddressSpace *dma_io_as;
 
     if (devfn < 0) {
-        for(devfn = bus->devfn_min ; devfn < ARRAY_SIZE(bus->devices);
+        devfn = 0x100;
+    }
+
+    if (pci_dev->slot_name && *pci_dev->slot_name) {
+        for(index = 0;
+            (index < ARRAY_SIZE(bus->devices) &&
+             (bus->devices[index] == NULL ||
+              bus->devices[index]->slot_name == NULL ||
+              strcmp(bus->devices[index]->slot_name, pci_dev->slot_name)));
+            ++index) {}
+        if (index < ARRAY_SIZE(bus->devices)) {
+            if ((devfn & ~0x7) == 0x100) {
+                /* Only function number was specified in devfn. */
+                devfn = PCI_DEVFN(PCI_SLOT(index), PCI_FUNC(devfn));
+            } else if (PCI_SLOT(index) != PCI_SLOT(devfn)) {
+                error_report("PCI: slot named %s not available for %s,"
+                             " in use by %s",
+                             pci_dev->slot_name,
+                             name, bus->devices[index]->name);
+                return NULL;
+            }
+        }
+    }
+
+    if ((devfn & ~0x7) == 0x100) {
+        for(devfn = bus->devfn_min + PCI_FUNC(devfn);
+            devfn < ARRAY_SIZE(bus->devices);
             devfn += PCI_FUNC_MAX) {
-            if (!bus->devices[devfn])
-                goto found;
+            if (!bus->devices[devfn]) {
+                for (index = 0; index < 8; ++index) {
+                    if (bus->devices[PCI_DEVFN(PCI_SLOT(devfn), index)]) {
+                        break;
+                    }
+                }
+                if (index == 8) {
+                    goto found;
+                }
+            }
         }
         error_report("PCI: no slot/function available for %s, all in use", name);
         return NULL;
@@ -835,6 +885,17 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
     memory_region_set_enabled(&pci_dev->bus_master_enable_region, false);
     address_space_init(&pci_dev->bus_master_as, &pci_dev->bus_master_enable_region,
                        name);
+
+    /* FIXME: inherit I/O region from bus creator */
+    dma_io_as = &address_space_io;
+
+    memory_region_init_alias(&pci_dev->bus_master_io_enable_region,
+                             OBJECT(pci_dev), "bus master IO",
+                             dma_io_as->root, 0,
+                             memory_region_size(dma_io_as->root));
+    memory_region_set_enabled(&pci_dev->bus_master_io_enable_region, false);
+    address_space_init(&pci_dev->bus_master_io_as,
+                       &pci_dev->bus_master_io_enable_region, name);
 
     pci_dev->devfn = devfn;
     pstrcpy(pci_dev->name, sizeof(pci_dev->name), name);
@@ -1167,6 +1228,9 @@ void pci_default_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int l)
     if (range_covers_byte(addr, l, PCI_COMMAND)) {
         pci_update_irq_disabled(d, was_irq_disabled);
         memory_region_set_enabled(&d->bus_master_enable_region,
+                                  pci_get_word(d->config + PCI_COMMAND)
+                                    & PCI_COMMAND_MASTER);
+        memory_region_set_enabled(&d->bus_master_io_enable_region,
                                   pci_get_word(d->config + PCI_COMMAND)
                                     & PCI_COMMAND_MASTER);
     }

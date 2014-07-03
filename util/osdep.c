@@ -493,3 +493,71 @@ writev(int fd, const struct iovec *iov, int iov_cnt)
     return readv_writev(fd, iov, iov_cnt, true);
 }
 #endif
+
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+bool qemu_map_file_data(QemuMappedFileData *data)
+{
+    qemu_unmap_file_data(data);
+
+    data->pointer = NULL;
+    data->fd = 0;
+
+    if ((data->length == 0) ||
+        (data->filename == NULL) || (*data->filename == '\0')) {
+        return false;
+    }
+
+    {
+        int open_flags;
+        if (data->readonly) {
+            open_flags = O_RDONLY;
+        } else {
+            open_flags = O_RDWR;
+        }
+
+        data->fd = open(data->filename, open_flags);
+        if ((data->fd == -1) || (data->fd == 0)) {
+            return false;
+        }
+    }
+
+    {
+        int flags = MAP_SHARED;
+        int prot;
+
+        if (data->readonly) {
+            prot = PROT_READ;
+        } else {
+            prot = PROT_READ | PROT_WRITE;
+        }
+
+        data->pointer = mmap64(NULL, data->length, prot, flags, data->fd, data->offset);
+        if ((data->pointer == MAP_FAILED) || (data->pointer == NULL)) {
+            qemu_unmap_file_data(data);
+            return false;
+        }
+    }
+    return true;
+}
+
+void qemu_unmap_file_data(QemuMappedFileData *data)
+{
+    if ((data->pointer != NULL) && (data->pointer != MAP_FAILED)) {
+        munmap(data->pointer, data->length);
+    }
+    if ((data->fd != 0) && (data->fd != -1)) {
+        close(data->fd);
+    }
+    data->pointer = NULL;
+    data->fd = 0;
+}
+
+void *__wrap_memcpy(void *dest, const void *src, size_t n);
+void *__wrap_memcpy(void *dest, const void *src, size_t n)
+{
+    return memmove(dest, src, n);
+}

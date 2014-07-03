@@ -802,6 +802,7 @@ void memory_region_transaction_commit(void)
     --memory_region_transaction_depth;
     if (!memory_region_transaction_depth) {
         if (memory_region_update_pending) {
+            fprintf(stderr, "updating memory topology\n");
             MEMORY_LISTENER_CALL_GLOBAL(begin, Forward);
 
             QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
@@ -1283,6 +1284,7 @@ int memory_region_get_fd(MemoryRegion *mr)
     return qemu_get_ram_fd(mr->ram_addr & TARGET_PAGE_MASK);
 }
 
+int memory_region_get_ram_ptr_ok;
 void *memory_region_get_ram_ptr(MemoryRegion *mr)
 {
     if (mr->alias) {
@@ -1291,6 +1293,10 @@ void *memory_region_get_ram_ptr(MemoryRegion *mr)
 
     assert(mr->terminates);
 
+    if (!memory_region_get_ram_ptr_ok) {
+        fprintf(stderr, "memory_region_get_ram_ptr 0x%llx\n",
+                (long long)(mr->ram_addr & TARGET_PAGE_MASK));
+    }
     return qemu_get_ram_ptr(mr->ram_addr & TARGET_PAGE_MASK);
 }
 

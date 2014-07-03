@@ -34,6 +34,8 @@ enum device_endian {
     DEVICE_LITTLE_ENDIAN,
 };
 
+bool is_wrong_endian(enum device_endian endian);
+
 /* address in the RAM (different from a physical address) */
 #if defined(CONFIG_XEN_BACKEND)
 typedef uint64_t ram_addr_t;

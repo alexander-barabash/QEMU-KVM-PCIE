@@ -140,23 +140,31 @@ enum {
 
 #define PCI_NUM_PINS 4 /* A-D */
 
+/* Numbers of bits in cap_present field. */
+enum {
+    QEMU_PCI_CAP_MSI_BITNR = 0,
+    QEMU_PCI_CAP_MSIX_BITNR = 1,
+    QEMU_PCI_CAP_EXPRESS_BITNR = 2,
+    /* multifunction capable device */
+    QEMU_PCI_CAP_MULTIFUNCTION_BITNR = 3,
+    /* command register SERR bit enabled */
+    QEMU_PCI_CAP_SERR_BITNR = 4,
+    /* Standard hot plug controller. */
+    QEMU_PCI_SHPC_BITNR = 5,
+    QEMU_PCI_SLOTID_BITNR = 6,
+};
+
 /* Bits in cap_present field. */
 enum {
-    QEMU_PCI_CAP_MSI = 0x1,
-    QEMU_PCI_CAP_MSIX = 0x2,
-    QEMU_PCI_CAP_EXPRESS = 0x4,
-
+    QEMU_PCI_CAP_MSI = (1 << QEMU_PCI_CAP_MSI_BITNR),
+    QEMU_PCI_CAP_MSIX = (1 << QEMU_PCI_CAP_MSIX_BITNR),
+    QEMU_PCI_CAP_EXPRESS = (1 << QEMU_PCI_CAP_EXPRESS_BITNR),
     /* multifunction capable device */
-#define QEMU_PCI_CAP_MULTIFUNCTION_BITNR        3
     QEMU_PCI_CAP_MULTIFUNCTION = (1 << QEMU_PCI_CAP_MULTIFUNCTION_BITNR),
-
     /* command register SERR bit enabled */
-#define QEMU_PCI_CAP_SERR_BITNR 4
     QEMU_PCI_CAP_SERR = (1 << QEMU_PCI_CAP_SERR_BITNR),
     /* Standard hot plug controller. */
-#define QEMU_PCI_SHPC_BITNR 5
     QEMU_PCI_CAP_SHPC = (1 << QEMU_PCI_SHPC_BITNR),
-#define QEMU_PCI_SLOTID_BITNR 6
     QEMU_PCI_CAP_SLOTID = (1 << QEMU_PCI_SLOTID_BITNR),
     /* PCI Express capability - Power Controller Present */
 #define QEMU_PCIE_SLTCAP_PCP_BITNR 7
@@ -239,10 +247,13 @@ struct PCIDevice {
     /* the following fields are read only */
     PCIBus *bus;
     int32_t devfn;
+    char *slot_name;
     char name[64];
     PCIIORegion io_regions[PCI_NUM_REGIONS];
     AddressSpace bus_master_as;
     MemoryRegion bus_master_enable_region;
+    AddressSpace bus_master_io_as;
+    MemoryRegion bus_master_io_enable_region;
 
     /* do not access the following fields */
     PCIConfigReadFunc *config_read;
@@ -257,6 +268,9 @@ struct PCIDevice {
 
     /* Capability bits */
     uint32_t cap_present;
+
+    /* Offset of ARI extended capability in config space */
+    uint16_t ari_cap;
 
     /* Offset of MSI-X capability in config space */
     uint8_t msix_cap;
@@ -673,6 +687,11 @@ static inline uint32_t pci_config_size(const PCIDevice *d)
 static inline AddressSpace *pci_get_address_space(PCIDevice *dev)
 {
     return &dev->bus_master_as;
+}
+
+static inline AddressSpace *pci_get_io_address_space(PCIDevice *dev)
+{
+    return &dev->bus_master_io_as;
 }
 
 static inline int pci_dma_rw(PCIDevice *dev, dma_addr_t addr,

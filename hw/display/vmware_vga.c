@@ -338,7 +338,7 @@ static inline void vmsvga_update_rect(struct vmsvga_state_s *s,
     bypl = surface_stride(surface);
     width = surface_bytes_per_pixel(surface) * w;
     start = surface_bytes_per_pixel(surface) * x + bypl * y;
-    src = s->vga.vram_ptr + start;
+    src = ACCESS_VRAM(&s->vga) + start;
     dst = surface_data(surface) + start;
 
     for (line = h; line > 0; line--, src += bypl, dst += bypl) {
@@ -381,7 +381,7 @@ static inline void vmsvga_copy_rect(struct vmsvga_state_s *s,
                 int x0, int y0, int x1, int y1, int w, int h)
 {
     DisplaySurface *surface = qemu_console_surface(s->vga.con);
-    uint8_t *vram = s->vga.vram_ptr;
+    uint8_t *vram = ACCESS_VRAM(&s->vga);
     int bypl = surface_stride(surface);
     int bypp = surface_bytes_per_pixel(surface);
     int width = bypp * w;
@@ -425,7 +425,7 @@ static inline void vmsvga_fill_rect(struct vmsvga_state_s *s,
     col[2] = c >> 16;
     col[3] = c >> 24;
 
-    fst = s->vga.vram_ptr + surface_bytes_per_pixel(surface) * x + bypl * y;
+    fst = ACCESS_VRAM(&s->vga) + surface_bytes_per_pixel(surface) * x + bypl * y;
 
     if (line--) {
         dst = fst;
@@ -1055,7 +1055,7 @@ static inline void vmsvga_check_size(struct vmsvga_state_s *s)
         trace_vmware_setmode(s->new_width, s->new_height, s->new_depth);
         surface = qemu_create_displaysurface_from(s->new_width, s->new_height,
                                                   s->new_depth, stride,
-                                                  s->vga.vram_ptr, false);
+                                                  ACCESS_VRAM(&s->vga), false);
         dpy_gfx_replace_surface(s->vga.con, surface);
         s->invalidated = 1;
     }
