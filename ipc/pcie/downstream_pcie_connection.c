@@ -30,7 +30,7 @@
 #include "qemu/error-report.h"
 #include <glib.h>
 
-#define EXTERNAL_PCI_DEBUG
+/* #define EXTERNAL_PCI_DEBUG */
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
     DEBUG_GENERAL, DEBUG_REQUESTS,

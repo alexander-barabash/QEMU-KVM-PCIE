@@ -23,7 +23,7 @@
 #include "ipc/pcie/requesters_table.h"
 #include <linux/kvm.h>
 
-#define EXTERNAL_PCI_DEBUG
+/* #define EXTERNAL_PCI_DEBUG */
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
     DEBUG_GENERAL, DEBUG_REQUESTS,

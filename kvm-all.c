@@ -146,6 +146,8 @@ bool kvm_gsi_routing_allowed;
 bool kvm_allowed;
 bool kvm_readonly_mem_allowed;
 
+bool do_rkvm_debug;
+
 static const KVMCapabilityInfo kvm_required_capabilites[] = {
     KVM_CAP_INFO(USER_MEMORY),
     KVM_CAP_INFO(DESTROY_MEMORY_REGION_WORKS),
@@ -443,7 +445,9 @@ int kvm_init_vcpu(CPUState *cpu)
             kvm_cpu_state->replay_pump_count = 0;
         }
     }
-    fprintf(stderr, "KVM_GET_TSC_KHZ = %d\n", kvm_vcpu_ioctl(cpu, KVM_GET_TSC_KHZ, 0));
+    if (do_rkvm_debug) {
+        fprintf(stderr, "KVM_GET_TSC_KHZ = %d\n", kvm_vcpu_ioctl(cpu, KVM_GET_TSC_KHZ, 0));
+    }
 err:
     return ret;
 }
@@ -1622,6 +1626,7 @@ int kvm_init(void)
         char *RKVM_DEBUG = getenv("RKVM_DEBUG");
         char *RKVM_DUMP = getenv("RKVM_DUMP");
         if (RKVM_DEBUG && *RKVM_DEBUG) {
+            do_rkvm_debug = true;
             s->rkvm_debug = true;
             s->rkvm_debug_directory = strdup(RKVM_DEBUG);
             mkdir(s->rkvm_debug_directory, 0777);
@@ -2489,13 +2494,19 @@ int kvm_on_sigbus(int code, void *addr)
 static void kvm_userspace_entry(struct rkvm_userspace_data *preemption_data) {
     KVMState *s = kvm_state;
     kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
-    printf("kvm_userspace_entry at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+    if (do_rkvm_debug) {
+        printf("kvm_userspace_entry at %lld\n",
+               preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+    }
 }
 
 static void kvm_userspace_exit(struct rkvm_userspace_data *preemption_data) {
     KVMState *s = kvm_state;
     kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
-    printf("kvm_userspace_exit at %lld\n", preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+    if (do_rkvm_debug) {
+        printf("kvm_userspace_exit at %lld\n",
+               preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+    }
 }
 
 static void kvm_userspace_spend(struct rkvm_userspace_data *preemption_data, unsigned time) {

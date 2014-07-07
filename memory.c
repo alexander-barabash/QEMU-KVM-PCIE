@@ -785,6 +785,7 @@ void memory_region_transaction_begin(void)
     ++memory_region_transaction_depth;
 }
 
+bool do_rkvm_debug;
 void memory_region_transaction_commit(void)
 {
     AddressSpace *as;
@@ -792,7 +793,8 @@ void memory_region_transaction_commit(void)
     assert(memory_region_transaction_depth);
     --memory_region_transaction_depth;
     if (!memory_region_transaction_depth && memory_region_update_pending) {
-        fprintf(stderr, "updating memory topology\n");
+        if (do_rkvm_debug)
+            fprintf(stderr, "updating memory topology\n");
         memory_region_update_pending = false;
         MEMORY_LISTENER_CALL_GLOBAL(begin, Forward);
 
@@ -1257,8 +1259,10 @@ void *memory_region_get_ram_ptr(MemoryRegion *mr)
     assert(mr->terminates);
 
     if (!memory_region_get_ram_ptr_ok) {
-        fprintf(stderr, "memory_region_get_ram_ptr 0x%llx\n",
-                (long long)(mr->ram_addr & TARGET_PAGE_MASK));
+        if (do_rkvm_debug) {
+            fprintf(stderr, "memory_region_get_ram_ptr 0x%llx\n",
+                    (long long)(mr->ram_addr & TARGET_PAGE_MASK));
+        }
     }
     return qemu_get_ram_ptr(mr->ram_addr & TARGET_PAGE_MASK);
 }

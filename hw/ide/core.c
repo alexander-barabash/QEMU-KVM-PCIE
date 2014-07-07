@@ -611,6 +611,7 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
     return action != BDRV_ACTION_IGNORE;
 }
 
+bool do_rkvm_debug;
 void ide_dma_cb(void *opaque, int ret)
 {
     IDEState *s = opaque;
@@ -618,7 +619,9 @@ void ide_dma_cb(void *opaque, int ret)
     int64_t sector_num;
     bool stay_active = false;
 
-    fprintf(stderr, "ide/core.c ide_dma_cb\n");
+    if (do_rkvm_debug) {
+        fprintf(stderr, "ide/core.c ide_dma_cb\n");
+    }
     if (ret < 0) {
         int op = BM_STATUS_DMA_RETRY;
 
@@ -652,7 +655,9 @@ void ide_dma_cb(void *opaque, int ret)
     /* end of transfer ? */
     if (s->nsector == 0) {
         s->status = READY_STAT | SEEK_STAT;
-        fprintf(stderr, "ide/core.c DMA %d bytes\n", s->io_buffer_size);
+        if (do_rkvm_debug) {
+            fprintf(stderr, "ide/core.c DMA %d bytes\n", s->io_buffer_size);
+        }
         ide_set_irq(s->bus);
         goto eot;
     }

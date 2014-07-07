@@ -1326,6 +1326,7 @@ found:
     return block;
 }
 
+bool do_rkvm_debug;
 int qemu_get_ram_ptr_ok;
 /* Return a host pointer to ram allocated with qemu_ram_alloc.
    With the exception of the softmmu code in this file, this should
@@ -1340,8 +1341,10 @@ void *qemu_get_ram_ptr(ram_addr_t addr)
     RAMBlock *block = qemu_get_ram_block(addr);
 
     if (!qemu_get_ram_ptr_ok) {
-        fprintf(stderr, "qemu_get_ram_ptr 0x%llx\n",
-                (long long)addr);
+        if (do_rkvm_debug) {
+            fprintf(stderr, "qemu_get_ram_ptr 0x%llx\n",
+                    (long long)addr);
+        }
     }
 
     if (xen_enabled()) {

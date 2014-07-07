@@ -28,7 +28,7 @@
 #include "qemu/error-report.h"
 #include "ipc/pcie/downstream_pcie_connection.h"
 
-#define EXTERNAL_PCI_DEBUG
+/* #define EXTERNAL_PCI_DEBUG */
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
     DEBUG_GENERAL, DEBUG_INITIAL,

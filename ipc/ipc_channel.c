@@ -29,13 +29,13 @@
 #include <sys/un.h>
 #include <errno.h>
 
-#define EXTERNAL_PCI_DEBUG
+/* #define EXTERNAL_PCI_DEBUG */
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
     DEBUG_GENERAL, DEBUG_CHANNEL_DATA,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL);
+static int debugflags = DBGBIT(GENERAL) | DBGBIT(CHANNEL_DATA);
 
 #define IF_DBGOUT(what, code) do {              \
         if (debugflags & DBGBIT(what)) {        \

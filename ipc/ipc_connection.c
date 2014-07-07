@@ -27,7 +27,7 @@
 #include <glib.h>
 #include <string.h>
 
-#define EXTERNAL_PCI_DEBUG
+/* #define EXTERNAL_PCI_DEBUG */
 #ifdef EXTERNAL_PCI_DEBUG
 enum {
     DEBUG_GENERAL, DEBUG_REQUESTS, DEBUG_INIT,
