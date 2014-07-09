@@ -121,7 +121,7 @@ struct KVMState
 #endif
     GMutex rkvm_mutex;
     bool use_rkvm_mutex;
-    bool has_preemption_timer;
+    bool has_rkvm;
     bool rkvm_debug;
     bool rkvm_dump;
     bool record_kvm_execution;
@@ -130,7 +130,6 @@ struct KVMState
     char *rkvm_dump_directory;
     char *record_directory;
     char *replay_directory;
-    int preemption_timer_rate;
     struct KVMCPUState dma_cpu;
 };
 
@@ -1530,12 +1529,8 @@ static int kvm_max_vcpus(KVMState *s)
 
 static void kvm_init_preemption_timer_caps(KVMState *s)
 {
-    s->has_preemption_timer =
-        kvm_check_extension(s, KVM_CAP_PREEMPTION_TIMER) != 0;
-    if (s->has_preemption_timer) {
-        s->preemption_timer_rate =
-            kvm_check_extension(s, KVM_CAP_PREEMPTION_TIMER_RATE);
-    }
+    s->has_rkvm =
+        kvm_check_extension(s, KVM_CAP_RKVM) != 0;
 }
 
 int kvm_init(void)
@@ -1615,9 +1610,9 @@ int kvm_init(void)
         goto err;
     }
 
-    if (s->has_preemption_timer) {
+    if (s->has_rkvm) {
         __u32 execution_mode = 0;
-        int quantum;
+        __u64 quantum;
         char *KVM_PREEMPTION_QUANTUM = getenv("KVM_PREEMPTION_QUANTUM");
         char *KVM_PREEMPTION_SEQUENTIAL = getenv("KVM_PREEMPTION_SEQUENTIAL");
         char *KVM_REPLAY = getenv("KVM_REPLAY");
@@ -1654,9 +1649,9 @@ int kvm_init(void)
             s->use_rkvm_mutex = true;
         }
         if (KVM_PREEMPTION_QUANTUM) {
-            quantum = atoi(KVM_PREEMPTION_QUANTUM) >> (s->preemption_timer_rate);
+            quantum = atoi(KVM_PREEMPTION_QUANTUM);
         } else if(!KVM_REPLAY || !*KVM_REPLAY) {
-            quantum = 512;
+            quantum = 512 * 32;
         } else {
             quantum = 0;
         }
@@ -1670,7 +1665,7 @@ int kvm_init(void)
             g_mutex_init(&s->rkvm_mutex);
         }
         if(quantum > 0) {
-            kvm_vm_ioctl(s, RKVM_SET_TIMER_QUANTUM, &quantum);
+            kvm_vm_ioctl(s, RKVM_SET_QUANTUM, &quantum);
         }
         kvm_vm_ioctl(s, RKVM_SET_EXECUTION_FLAG, &execution_mode);
     }
@@ -2496,7 +2491,7 @@ static void kvm_userspace_entry(struct rkvm_userspace_data *preemption_data) {
     kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
     if (do_rkvm_debug) {
         printf("kvm_userspace_entry at %lld\n",
-               preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+               preemption_data->accumulate_ucc);
     }
 }
 
@@ -2505,14 +2500,12 @@ static void kvm_userspace_exit(struct rkvm_userspace_data *preemption_data) {
     kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
     if (do_rkvm_debug) {
         printf("kvm_userspace_exit at %lld\n",
-               preemption_data->accumulate_preemption_timer << s->preemption_timer_rate);
+               preemption_data->accumulate_ucc);
     }
 }
 
 static void kvm_userspace_spend(struct rkvm_userspace_data *preemption_data, unsigned time) {
-    KVMState *s = kvm_state;
-    preemption_data->accumulate_preemption_timer +=
-        (time + (1 << s->preemption_timer_rate) - 1) >> s->preemption_timer_rate;
+    preemption_data->accumulate_ucc += time;
 }
 
 static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)

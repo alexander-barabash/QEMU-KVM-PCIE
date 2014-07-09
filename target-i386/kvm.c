@@ -1930,7 +1930,7 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
         __u64 steal_milli_secs;
         __u64 last_read_tsc_milli_secs;
         struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
-        new_secs = (debug->steal + debug->accumulate_preemption_timer) / (2000 * ((1000 * 1000) >> 5));
+        new_secs = (debug->steal + debug->accumulate_ucc) / (2000 * 1000 * 1000);
         steal_milli_secs = debug->steal / (2 * ((1000 * 1000) >> 5));
         last_read_tsc_milli_secs = debug->last_read_tsc / (2 * (1000 * 1000));
         if(new_secs > debug->reported_secs) {
@@ -2340,9 +2340,6 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         ret = kvm_handle_debug(cpu, &run->debug.arch);
-        break;
-    case KVM_EXIT_PREEMPTION_TIMER:
-        ret = 0;
         break;
     case KVM_EXIT_RKVM:
         ret = 0;
