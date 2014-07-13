@@ -119,8 +119,6 @@ struct KVMState
     QTAILQ_HEAD(msi_hashtab, KVMMSIRoute) msi_hashtab[KVM_MSI_HASHTAB_SIZE];
     bool direct_msi;
 #endif
-    GMutex rkvm_mutex;
-    bool use_rkvm_mutex;
     bool has_rkvm;
     bool rkvm_debug;
     bool rkvm_dump;
@@ -1633,20 +1631,17 @@ int kvm_init(void)
         }
         if (KVM_LOCKSTEP && *KVM_LOCKSTEP) {
             execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
-            s->use_rkvm_mutex = true;
         }
         if (KVM_RECORD && *KVM_RECORD) {
             execution_mode |= RKVM_EXECUTION_MODE_RECORD;
             s->record_kvm_execution = true;
             s->record_directory = strdup(KVM_RECORD);
             mkdir(s->record_directory, 0777);
-            s->use_rkvm_mutex = true;
         }
         if (KVM_REPLAY && *KVM_REPLAY) {
             execution_mode |= RKVM_EXECUTION_MODE_REPLAY;
             s->replay_kvm_execution = true;
             s->replay_directory = strdup(KVM_REPLAY);
-            s->use_rkvm_mutex = true;
         }
         if (KVM_PREEMPTION_QUANTUM) {
             quantum = atoi(KVM_PREEMPTION_QUANTUM);
@@ -1658,11 +1653,6 @@ int kvm_init(void)
         if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
             (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
             execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
-            s->use_rkvm_mutex = true;
-        }
-        s->use_rkvm_mutex = false; // This mutex was a bad idea.
-        if (s->use_rkvm_mutex) {
-            g_mutex_init(&s->rkvm_mutex);
         }
         if(quantum > 0) {
             kvm_vm_ioctl(s, RKVM_SET_QUANTUM, &quantum);
@@ -2014,13 +2004,7 @@ int kvm_cpu_exec(CPUState *cpu)
         }
         qemu_mutex_unlock_iothread();
 
-        if (s->use_rkvm_mutex) {
-            g_mutex_lock(&s->rkvm_mutex);
-        }
         run_ret = kvm_vcpu_ioctl(cpu, KVM_RUN, 0);
-        if (s->use_rkvm_mutex) {
-            g_mutex_unlock(&s->rkvm_mutex);
-        }
 
         qemu_mutex_lock_iothread();
         kvm_arch_post_run(cpu, run);
@@ -2550,13 +2534,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         rkvm_xfer.dest = dest;
         rkvm_xfer.src = src;
         pump_streams(&s->dma_cpu);
-        if (s->use_rkvm_mutex) {
-            g_mutex_lock(&s->rkvm_mutex);
-        }
         r = kvm_vm_ioctl(s, RKVM_XFER, &rkvm_xfer);
-        if (s->use_rkvm_mutex) {
-            g_mutex_unlock(&s->rkvm_mutex);
-        }
         if (r >= 0) {
             dest += 4;
             src += 4;
@@ -2571,13 +2549,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         rkvm_xfer.src = src;
         do {
             pump_streams(&s->dma_cpu);
-            if (s->use_rkvm_mutex) {
-                g_mutex_lock(&s->rkvm_mutex);
-            }
             r = kvm_vm_ioctl(s, RKVM_XFER, &rkvm_xfer);
-            if (s->use_rkvm_mutex) {
-                g_mutex_unlock(&s->rkvm_mutex);
-            }
         } while (r == -EAGAIN);
     }
     pump_streams(&s->dma_cpu);
