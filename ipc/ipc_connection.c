@@ -145,6 +145,7 @@ void init_ipc_connection(IPCConnection *connection,
 
 void activate_ipc_connection(IPCConnection *connection)
 {
+#if !GLIB_CHECK_VERSION(2, 32, 0)
     g_thread_create_full(/* func = */ ipc_input_thread,
                          /* data = */ connection,
                          /* stack_size = */ 0,
@@ -152,6 +153,11 @@ void activate_ipc_connection(IPCConnection *connection)
                          /* bound = */ TRUE,
                          /* priority = */ G_THREAD_PRIORITY_NORMAL,
                          /* error = */ NULL);
+#else
+    g_thread_new(/* name = */ NULL,
+                 /* func = */ ipc_input_thread,
+                 /* data = */ connection);
+#endif
 }
 
 static GHashTable *get_ipc_connection_table(bool use_abstract_path)
