@@ -88,7 +88,6 @@ static gpointer ipc_input_thread(gpointer opaque)
 static void init_threads(void)
 {
     static bool already_called;
-    bool threads_already_initialized;
     if (already_called) {
         return;
     }
@@ -102,18 +101,22 @@ static void init_threads(void)
         /* g_thread_init() has been deprecated since version 2.32. */
         return;
     }
-    /*
-     * Since version 2.24, calling g_thread_init() multiple times is allowed,
-     * but nothing happens except for the first call.
-     */
-    /* g_thread_get_initialized() is supported since 2.20. */
-    threads_already_initialized = g_thread_get_initialized();
-    DBGOUT(INIT, "g_thread_get_initialized() returned %s.",
-           threads_already_initialized? "true": "false");
-    if (!threads_already_initialized) {
-        DBGOUT(INIT, "init_threads calling g_thread_init");
-        g_thread_init(NULL);
+#if !GLIB_CHECK_VERSION(2, 32, 0)
+    {
+        /*
+         * Since version 2.24, calling g_thread_init() multiple times is allowed,
+         * but nothing happens except for the first call.
+         */
+        /* g_thread_get_initialized() is supported since 2.20. */
+        bool threads_already_initialized = g_thread_get_initialized();
+        DBGOUT(INIT, "g_thread_get_initialized() returned %s.",
+               threads_already_initialized? "true": "false");
+        if (!threads_already_initialized) {
+            DBGOUT(INIT, "init_threads calling g_thread_init");
+            g_thread_init(NULL);
+        }
     }
+#endif
 }
 
 static void ipc_bh(void *opaque)
