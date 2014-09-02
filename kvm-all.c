@@ -2501,6 +2501,9 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
     if (len < 0)
         return -1;
 
+    if (!s)
+        return -1;
+
     if (!s->record_kvm_execution && !s->replay_kvm_execution)
         return -1;
 
