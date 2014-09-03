@@ -2700,9 +2700,7 @@ else
     glib_req_ver=2.12
 fi
 glib_modules=gthread-2.0
-if test "$modules" = yes; then
-    glib_modules="$glib_modules gmodule-2.0"
-fi
+glib_modules="$glib_modules gmodule-2.0"
 
 for i in $glib_modules; do
     if $pkg_config --atleast-version=$glib_req_ver $i; then

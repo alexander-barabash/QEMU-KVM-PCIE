@@ -38,7 +38,7 @@
 #include "migration/migration.h"
 #include "qapi/qmp/qerror.h"
 
-//#define DEBUG_KVM
+#define DEBUG_KVM
 
 #ifdef DEBUG_KVM
 #define DPRINTF(fmt, ...) \
@@ -2117,6 +2117,39 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
     X86CPU *x86_cpu = X86_CPU(cpu);
     CPUX86State *env = &x86_cpu->env;
     int ret;
+    static  __thread bool was;
+    static __thread bool print_preemption_report;
+    if(!was) {
+        char *RKVM_REPORT = getenv("RKVM_REPORT");
+        if (RKVM_REPORT && *RKVM_REPORT && (*RKVM_REPORT != '0')) {
+            print_preemption_report = true;
+        }
+        was = true;
+        //system("xterm");
+    }
+
+    if (print_preemption_report) {
+        __u64 new_secs;
+        __u64 steal_milli_secs;
+        __u64 last_read_tsc_milli_secs;
+        struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
+        new_secs = (debug->steal + debug->accumulate_ucc) / (2000 * 1000 * 1000);
+        steal_milli_secs = debug->steal / (2 * ((1000 * 1000) >> 5));
+        last_read_tsc_milli_secs = debug->last_read_tsc / (2 * (1000 * 1000));
+        if(new_secs > debug->reported_secs) {
+            __u64 diff_secs = new_secs - debug->reported_secs;
+            debug->reported_secs = new_secs;
+            DPRINTF("CPU %d run for %lld secs (diff %lld). "
+                    "Preemption diff %lld. Last read TSC %lld ms. "
+                    "AUX %d calls. Steal: %lld ms.\n",
+                    cpu_index(cpu),
+                    new_secs, diff_secs,
+                    (long long)(debug->front - debug->back),
+                    last_read_tsc_milli_secs,
+                    debug->tscp_counter,
+                    steal_milli_secs);
+        }
+    }
 
     /* Inject NMI */
     if (cpu->interrupt_request & CPU_INTERRUPT_NMI) {
@@ -2150,7 +2183,7 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
                 struct kvm_interrupt intr;
 
                 intr.irq = irq;
-                DPRINTF("injected interrupt %d\n", irq);
+                //DPRINTF("CPU %d injected interrupt 0x%x\n", cpu_index(cpu), irq);
                 ret = kvm_vcpu_ioctl(cpu, KVM_INTERRUPT, &intr);
                 if (ret < 0) {
                     fprintf(stderr,
@@ -2477,7 +2510,7 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
 
     switch (run->exit_reason) {
     case KVM_EXIT_HLT:
-        DPRINTF("handle_hlt\n");
+        //DPRINTF("handle_hlt\n");
         ret = kvm_handle_halt(cpu);
         break;
     case KVM_EXIT_SET_TPR:
@@ -2511,6 +2544,9 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         ret = kvm_handle_debug(cpu, &run->debug.arch);
+        break;
+    case KVM_EXIT_RKVM:
+        ret = 0;
         break;
     default:
         fprintf(stderr, "KVM: unknown exit reason %d\n", run->exit_reason);

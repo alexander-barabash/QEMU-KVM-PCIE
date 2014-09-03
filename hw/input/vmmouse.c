@@ -167,6 +167,9 @@ static void vmmouse_data(VMMouseState *s, uint32_t *data, uint32_t size)
 
     DPRINTF("vmmouse_data(%d)\n", size);
 
+    if (size > s->nb_queue)
+        size = s->nb_queue;
+
     if (size == 0 || size > 6 || size > s->nb_queue) {
         printf("vmmouse: driver requested too much data %d\n", size);
         s->status = 0xffff;

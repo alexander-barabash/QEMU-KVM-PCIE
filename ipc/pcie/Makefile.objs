@@ -1,0 +1,4 @@
+common-obj-y += ipc_pcie_sizer.o
+common-obj-y += downstream_pcie_connection.o
+common-obj-y += requesters_table.o
+common-obj-$(CONFIG_EXTERNAL_PCI) += external_pci.o

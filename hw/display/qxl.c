@@ -381,7 +381,7 @@ static void init_qxl_ram(PCIQXLDevice *d)
     uint8_t *buf;
     uint64_t *item;
 
-    buf = d->vga.vram_ptr;
+    buf = d->vga.vram_ptrX;
     d->ram = (QXLRam *)(buf + le32_to_cpu(d->shadow_rom.ram_header_offset));
     d->ram->magic       = cpu_to_le32(QXL_RAM_MAGIC);
     d->ram->int_pending = cpu_to_le32(0);
@@ -411,7 +411,7 @@ static void qxl_rom_set_dirty(PCIQXLDevice *qxl)
 /* called from spice server thread context only */
 static void qxl_ram_set_dirty(PCIQXLDevice *qxl, void *ptr)
 {
-    void *base = qxl->vga.vram_ptr;
+    void *base = qxl->vga.vram_ptrX;
     intptr_t offset;
 
     offset = ptr - base;
@@ -2096,7 +2096,7 @@ static int qxl_init_secondary(PCIDevice *dev)
     memory_region_init_ram(&qxl->vga.vram, OBJECT(dev), "qxl.vgavram",
                            qxl->vga.vram_size);
     vmstate_register_ram(&qxl->vga.vram, &qxl->pci.qdev);
-    qxl->vga.vram_ptr = memory_region_get_ram_ptr(&qxl->vga.vram);
+    qxl->vga.vram_ptrX = memory_region_get_ram_ptr(&qxl->vga.vram);
     qxl->vga.con = graphic_console_init(DEVICE(dev), 0, &qxl_ops, qxl);
 
     return qxl_init_common(qxl);
@@ -2105,7 +2105,7 @@ static int qxl_init_secondary(PCIDevice *dev)
 static void qxl_pre_save(void *opaque)
 {
     PCIQXLDevice* d = opaque;
-    uint8_t *ram_start = d->vga.vram_ptr;
+    uint8_t *ram_start = d->vga.vram_ptrX;
 
     trace_qxl_pre_save(d->id);
     if (d->last_release == NULL) {
@@ -2141,7 +2141,7 @@ static void qxl_create_memslots(PCIQXLDevice *d)
 static int qxl_post_load(void *opaque, int version)
 {
     PCIQXLDevice* d = opaque;
-    uint8_t *ram_start = d->vga.vram_ptr;
+    uint8_t *ram_start = d->vga.vram_ptrX;
     QXLCommandExt *cmds;
     int in, out, newmode;
 

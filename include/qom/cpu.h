@@ -175,6 +175,7 @@ typedef struct CPUWatchpoint {
 } CPUWatchpoint;
 
 struct KVMState;
+struct KVMCPUState;
 struct kvm_run;
 
 #define TB_JMP_CACHE_BITS 12
@@ -270,6 +271,7 @@ struct CPUState {
     int kvm_fd;
     bool kvm_vcpu_dirty;
     struct KVMState *kvm_state;
+    struct KVMCPUState *kvm_cpu_state;
     struct kvm_run *kvm_run;
 
     /* TODO Move common fields from CPUArchState here. */
