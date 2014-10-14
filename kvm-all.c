@@ -1689,8 +1689,10 @@ int kvm_init(MachineClass *mc)
 
     if (s->has_rkvm) {
         __u32 execution_mode = 0;
-        __u64 quantum;
+        __u64 quantum = 0;
+#if 0
         char *KVM_PREEMPTION_QUANTUM = getenv("KVM_PREEMPTION_QUANTUM");
+#endif
         char *KVM_PREEMPTION_SEQUENTIAL = getenv("KVM_PREEMPTION_SEQUENTIAL");
         char *KVM_REPLAY = getenv("KVM_REPLAY");
         char *KVM_RECORD = getenv("KVM_RECORD");
@@ -1722,6 +1724,7 @@ int kvm_init(MachineClass *mc)
             s->replay_kvm_execution = true;
             s->replay_directory = strdup(KVM_REPLAY);
         }
+#if 0
         if (KVM_PREEMPTION_QUANTUM) {
             quantum = atoi(KVM_PREEMPTION_QUANTUM);
         } else if(!KVM_REPLAY || !*KVM_REPLAY) {
@@ -1729,6 +1732,7 @@ int kvm_init(MachineClass *mc)
         } else {
             quantum = 0;
         }
+#endif
         if (KVM_PREEMPTION_SEQUENTIAL && *KVM_PREEMPTION_SEQUENTIAL &&
             (*KVM_PREEMPTION_SEQUENTIAL != '0')) {
             execution_mode |= RKVM_EXECUTION_MODE_LOCKSTEP;
@@ -2070,6 +2074,7 @@ int kvm_cpu_exec(CPUState *cpu)
                 uint8_t *buf = malloc(0x100000);
                 int fd;
                 int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
+                ssize_t actually_written;
                 sprintf(dumpfile, "%s/dump-%d",
                         s->rkvm_dump_directory,
                         (int)run->rkvm_vcpu_debug_data.cnt / 1000);
@@ -2081,7 +2086,10 @@ int kvm_cpu_exec(CPUState *cpu)
                 address_space_read(&address_space_memory, 0, buf, 0x100000);
                 qemu_get_ram_ptr_ok = 0;
                 pkvm_xfer = save_pkvm_xfer;
-                write(fd, buf, 0x100000);
+                actually_written = write(fd, buf, 0x100000);
+                if(actually_written != 0x100000) {
+                    fprintf(stderr, "dump failure\n");
+                }
                 close(fd);
                 free(buf);
             }
@@ -2686,7 +2694,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         uint8_t *buf = malloc(0x100000);
         int fd;
         int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
-
+        ssize_t actually_written;
         sprintf(dumpfile, "%s/pre-dma-dump-%d",
                 s->rkvm_dump_directory,
                 ++cnt);
@@ -2698,7 +2706,10 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         address_space_read(&address_space_memory, 0, buf, 0x100000);
         qemu_get_ram_ptr_ok = 0;
         pkvm_xfer = save_pkvm_xfer;
-        write(fd, buf, 0x100000);
+        actually_written = write(fd, buf, 0x100000);
+        if(actually_written != 0x100000) {
+            fprintf(stderr, "dump failure\n");
+        }
         close(fd);
         free(buf);
     }
@@ -2734,6 +2745,7 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         uint8_t *buf = malloc(0x100000);
         int fd;
         int (*save_pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len) = pkvm_xfer;
+        ssize_t actually_written;
         sprintf(dumpfile, "%s/dma-dump-%d",
                 s->rkvm_dump_directory,
                 ++cnt);
@@ -2745,7 +2757,10 @@ static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
         address_space_read(&address_space_memory, 0, buf, 0x100000);
         qemu_get_ram_ptr_ok = 0;
         pkvm_xfer = save_pkvm_xfer;
-        write(fd, buf, 0x100000);
+        actually_written = write(fd, buf, 0x100000);
+        if(actually_written != 0x100000) {
+            fprintf(stderr, "dump failure\n");
+        }
         close(fd);
         free(buf);
     }
