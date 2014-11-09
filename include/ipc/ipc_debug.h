@@ -14,7 +14,8 @@
     do {                                                            \
         fprintf(stderr, #key ": " fmt , ## __VA_ARGS__);            \
     } while(0)
-#define DBGPRINT(fmt, ...) IPC_DBGPRINT(IPC_DBGKEY, fmt, ## __VA_ARGS__)
+#define IPC_DBGPRINT_IMPL(...) IPC_DBGPRINT(__VA_ARGS__)
+#define DBGPRINT(fmt, ...) IPC_DBGPRINT_IMPL(IPC_DBGKEY, fmt, ## __VA_ARGS__)
 #define	IPC_DBGOUT(key, what, fmt, ...)                                 \
     do {                                                                \
         if (IPC_DEBUG_##what) {                                         \
