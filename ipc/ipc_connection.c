@@ -213,7 +213,7 @@ void register_ipc_connection(const char *socket_path,
 
 void wait_on_ipc_connection(IPCConnection *connection,
                             bool (*wait_function)(void *), void *user_data) {
-    while (!wait_function(user_data) && !connection->shutdown) {
+    while (!connection->shutdown && !wait_function(user_data)) {
         aio_poll(connection->aio_context, true);
     }
 }
