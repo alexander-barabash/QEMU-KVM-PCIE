@@ -29,29 +29,9 @@
 #include <sys/un.h>
 #include <errno.h>
 
-/* #define EXTERNAL_PCI_DEBUG */
-#ifdef EXTERNAL_PCI_DEBUG
-enum {
-    DEBUG_GENERAL, DEBUG_CHANNEL_DATA,
-};
-#define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(CHANNEL_DATA);
-
-#define IF_DBGOUT(what, code) do {              \
-        if (debugflags & DBGBIT(what)) {        \
-            code;                               \
-        }                                       \
-    } while (0)
-
-#define DBGPRINT(fmt, ...)                                          \
-    do {                                                            \
-        fprintf(stderr, fmt , ## __VA_ARGS__);                      \
-    } while(0)
-#else
-#define IF_DBGOUT(what, code) do {} while (0)
-#endif
-#define	DBGOUT(what, fmt, ...) \
-    IF_DBGOUT(what, DBGPRINT("ipc_channel: " fmt "\n", ## __VA_ARGS__))
+#define IPC_DBGKEY ipc_channel
+#include "ipc/ipc_debug.h"
+IPC_DEBUG_ON(CHANNEL_DATA);
 
 bool setup_ipc_channel(IPCChannel *channel,
                        const char *socket_path, bool use_abstract_path)

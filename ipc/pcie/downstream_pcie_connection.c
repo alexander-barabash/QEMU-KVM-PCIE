@@ -30,21 +30,9 @@
 #include "qemu/error-report.h"
 #include <glib.h>
 
-/* #define EXTERNAL_PCI_DEBUG */
-#ifdef EXTERNAL_PCI_DEBUG
-enum {
-    DEBUG_GENERAL, DEBUG_REQUESTS,
-};
-#define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(REQUESTS);
-
-#define	DBGOUT(what, fmt, ...) do { \
-    if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "downstream_pcie_connection: " fmt "\n", ## __VA_ARGS__); \
-    } while (0)
-#else
-#define	DBGOUT(what, fmt, ...) do {} while (0)
-#endif
+#define IPC_DBGKEY downstream_pcie_connection
+#include "ipc/ipc_debug.h"
+IPC_DEBUG_ON(REQUESTS);
 
 void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                   PCIDevice *pci_dev,

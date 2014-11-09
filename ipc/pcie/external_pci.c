@@ -28,21 +28,10 @@
 #include "qemu/error-report.h"
 #include "ipc/pcie/downstream_pcie_connection.h"
 
-/* #define EXTERNAL_PCI_DEBUG */
-#ifdef EXTERNAL_PCI_DEBUG
-enum {
-    DEBUG_GENERAL, DEBUG_INITIAL,
-};
-#define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(INITIAL);
-
-#define	DBGOUT(what, fmt, ...) do { \
-    if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "external_pci: " fmt "\n", ## __VA_ARGS__); \
-    } while (0)
-#else
-#define	DBGOUT(what, fmt, ...) do {} while (0)
-#endif
+#define IPC_DBGKEY external_pci
+#include "ipc/ipc_debug.h"
+IPC_DEBUG_ON(GENERAL);
+IPC_DEBUG_ON(INITIAL);
 
 enum {
     DEVICE_BIG_ENDIAN_FLAG_NR,

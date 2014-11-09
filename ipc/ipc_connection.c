@@ -27,21 +27,11 @@
 #include <glib.h>
 #include <string.h>
 
-/* #define EXTERNAL_PCI_DEBUG */
-#ifdef EXTERNAL_PCI_DEBUG
-enum {
-    DEBUG_GENERAL, DEBUG_REQUESTS, DEBUG_INIT,
-};
-#define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(REQUESTS) | DBGBIT(INIT);
-
-#define	DBGOUT(what, fmt, ...) do { \
-    if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "ipc_connection: " fmt "\n", ## __VA_ARGS__); \
-    } while (0)
-#else
-#define	DBGOUT(what, fmt, ...) do {} while (0)
-#endif
+#define IPC_DBGKEY ipc_connection
+#include "ipc/ipc_debug.h"
+IPC_DEBUG_ON(GENERAL);
+IPC_DEBUG_ON(REQUESTS);
+IPC_DEBUG_ON(INIT);
 
 static gpointer ipc_input_thread(gpointer opaque)
 {

@@ -23,21 +23,9 @@
 #include "ipc/pcie/requesters_table.h"
 #include <linux/kvm.h>
 
-/* #define EXTERNAL_PCI_DEBUG */
-#ifdef EXTERNAL_PCI_DEBUG
-enum {
-    DEBUG_GENERAL, DEBUG_REQUESTS,
-};
-#define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL) | DBGBIT(REQUESTS);
-
-#define	DBGOUT(what, fmt, ...) do { \
-    if (debugflags & DBGBIT(what)) \
-        fprintf(stderr, "requesters_table: " fmt "\n", ## __VA_ARGS__); \
-    } while (0)
-#else
-#define	DBGOUT(what, fmt, ...) do {} while (0)
-#endif
+#define IPC_DBGKEY requesters_table
+#include "ipc/ipc_debug.h"
+IPC_DEBUG_ON(REQUESTS);
 
 GHashTable *create_pcie_requesters_table(void)
 {
