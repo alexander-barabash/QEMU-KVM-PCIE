@@ -58,8 +58,7 @@ static gpointer ipc_input_thread(gpointer opaque)
         if (!read_ipc_channel_data(&connection->channel, header, header_size)) {
             DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
-            qemu_system_shutdown_request();
-            return NULL;
+            goto shutdown;
         } else {
             DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
@@ -73,8 +72,7 @@ static gpointer ipc_input_thread(gpointer opaque)
                                    packet_size - header_size)) {
             DBGOUT(GENERAL, "read_ipc_channel_data failed\n");
             /* BROKEN */
-            qemu_system_shutdown_request();
-            return NULL;
+            goto shutdown;
         } else {
             DBGOUT(REQUESTS, "read_ipc_channel_data success\n");
         }
@@ -82,6 +80,13 @@ static gpointer ipc_input_thread(gpointer opaque)
         qemu_bh_schedule(connection->bh);
     }
     free(header);
+    return NULL;
+
+ shutdown:
+    connection->shutdown = true;
+    DBGOUT(GENERAL, "Schedule connection shutdown\n");
+    g_async_queue_push(connection->incoming, header);
+    qemu_bh_schedule(connection->bh);
     return NULL;
 }
 
@@ -123,6 +128,11 @@ static void ipc_bh(void *opaque)
 {
     IPCConnection *connection = opaque;
     IPCPacket *packet = g_async_queue_try_pop(connection->incoming);
+    if (connection->shutdown) {
+        DBGOUT(GENERAL, "Connection shutting down\n");
+        qemu_system_shutdown_request();
+        return;
+    }
     if (packet) {
         connection->packet_handler(packet, connection);
         qemu_bh_schedule(connection->bh);        
@@ -141,6 +151,7 @@ void init_ipc_connection(IPCConnection *connection,
     connection->packet_handler = packet_handler;
     connection->aio_context = qemu_get_aio_context();
     connection->bh = aio_bh_new(connection->aio_context, ipc_bh, connection);
+    connection->shutdown = false;
 }
 
 void activate_ipc_connection(IPCConnection *connection)
@@ -202,7 +213,7 @@ void register_ipc_connection(const char *socket_path,
 
 void wait_on_ipc_connection(IPCConnection *connection,
                             bool (*wait_function)(void *), void *user_data) {
-    while (!wait_function(user_data)) {
+    while (!wait_function(user_data) && !connection->shutdown) {
         aio_poll(connection->aio_context, true);
     }
 }

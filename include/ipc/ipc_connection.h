@@ -41,6 +41,7 @@ struct IPCConnection {
     AioContext *aio_context;
     QEMUBH *bh;
     IPCPacketHandler packet_handler;
+    bool shutdown;
 };
 
 struct IPCPacket {
