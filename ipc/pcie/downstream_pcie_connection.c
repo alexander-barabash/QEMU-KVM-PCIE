@@ -104,6 +104,9 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                       addr,
                                       size);
     wait_on_pcie_request(&connection->connection, request);
+    if (connection->connection.shutdown) {
+        return 0;
+    }
     decode_completion(request->transaction, &decoded);
     if (size > 0) {
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
@@ -142,6 +145,9 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
                                    size,
                                    data.bytes);
     wait_on_pcie_request(&connection->connection, request);
+    if (connection->connection.shutdown) {
+        return;
+    }
     pcie_request_done(request);
     DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%llX done", size, (unsigned long long)addr);
 }
@@ -173,6 +179,9 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
                                       addr,
                                       size);
     wait_on_pcie_request(&connection->connection, request);
+    if (connection->connection.shutdown) {
+        return 0;
+    }
     decode_completion(request->transaction, &decoded);
     if (size > 0) {
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
@@ -214,6 +223,9 @@ void write_downstream_pcie_config(DownstreamPCIeConnection *connection,
                                        size,
                                        data.bytes);
     wait_on_pcie_request(&connection->connection, request);
+    if (connection->connection.shutdown) {
+        return;
+    }
     pcie_request_done(request);
     DBGOUT(REQUESTS, "write_downstream_pcie_config %d bytes @ 0x%X done.", size, addr);
 }

@@ -270,6 +270,9 @@ external_pci_config_read(PCIDevice *dev, uint32_t address, int len)
            address, len);
     val = read_downstream_pcie_config(d->ipc_connection,
                                       dev, address, len);
+    if (d->ipc_connection->connection.shutdown) {
+        return val;
+    }
     le32_val = cpu_to_le32(val);
     memcpy(dev->config + address, &le32_val, len);
     DBGOUT(GENERAL, "external_pci_config_read addr=0x%X len=%d val=0x%X",
@@ -416,6 +419,10 @@ external_pci_config_write(PCIDevice *dev, uint32_t addr, uint32_t val,
 
     write_downstream_pcie_config(d->ipc_connection,
                                  dev, addr, val, l);
+
+    if (d->ipc_connection->connection.shutdown) {
+        return;
+    }
 
     if (covers_pci_command) {
         update_last_written_value(&d->last_written_pci_command, addr, val, l);
