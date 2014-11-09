@@ -36,7 +36,7 @@ enum {
     DEBUG_GENERAL, DEBUG_REQUESTS,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
-static int debugflags = DBGBIT(GENERAL);
+static int debugflags = DBGBIT(GENERAL) | DBGBIT(REQUESTS);
 
 #define	DBGOUT(what, fmt, ...) do { \
     if (debugflags & DBGBIT(what)) \

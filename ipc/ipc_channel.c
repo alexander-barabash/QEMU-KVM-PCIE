@@ -114,6 +114,7 @@ bool read_ipc_channel_data(IPCChannel *channel,
     while (size > 0) {
         len = read(channel->fd, buffer, size);
         if (len == -1 && errno == EINTR) {
+            DBGOUT(CHANNEL_DATA, "read_ipc_channel_data restarted. errno=%d", errno);
             continue;
         }
         if (len <= 0) {
