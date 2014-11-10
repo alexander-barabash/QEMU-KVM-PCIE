@@ -2924,6 +2924,108 @@ out:
     return 0;
 }
 
+static void process_memory_opts(QemuOpts *opts,
+                                ram_addr_t *p_ram_size,
+                                ram_addr_t *p_maxram_size,
+                                uint64_t *p_ram_slots,
+                                const ram_addr_t default_ram_size,
+                                bool from_cmdline)
+{
+    ram_addr_t ram_size = *p_ram_size;
+    ram_addr_t maxram_size = *p_maxram_size;
+    uint64_t ram_slots = *p_ram_slots;
+
+    uint64_t sz;
+    const char *mem_str;
+    const char *maxmem_str, *slots_str;
+
+    const char *error_description = from_cmdline ?
+        "-m option value" : "memory configuration";
+
+    mem_str = qemu_opt_get(opts, "size");
+    if (!mem_str) {
+        error_report("invalid %s, missing 'size' option", error_description);
+        exit(EXIT_FAILURE);
+    }
+    if (!*mem_str) {
+        error_report("missing 'size' option value");
+        exit(EXIT_FAILURE);
+    }
+    
+    sz = qemu_opt_get_size(opts, "size", ram_size);
+    
+    /* Fix up legacy suffix-less format */
+    if (from_cmdline && g_ascii_isdigit(mem_str[strlen(mem_str) - 1])) {
+        uint64_t overflow_check = sz;
+        
+        sz <<= 20;
+        if ((sz >> 20) != overflow_check) {
+            error_report("too large 'size' option value");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    /* backward compatibility behaviour for case "-m 0" */
+    if (sz == 0) {
+        sz = default_ram_size;
+    }
+    
+    sz = QEMU_ALIGN_UP(sz, 8192);
+    ram_size = sz;
+    if (ram_size != sz) {
+        error_report("ram size too large");
+        exit(EXIT_FAILURE);
+    }
+    maxram_size = ram_size;
+    
+    maxmem_str = qemu_opt_get(opts, "maxmem");
+    slots_str = qemu_opt_get(opts, "slots");
+    if (maxmem_str && slots_str) {
+        uint64_t slots;
+        
+        sz = qemu_opt_get_size(opts, "maxmem", 0);
+        if (sz < ram_size) {
+            fprintf(stderr, "qemu: invalid %s: maxmem "
+                    "(%" PRIu64 ") <= initial memory ("
+                    RAM_ADDR_FMT ")\n", error_description, sz, ram_size);
+            exit(EXIT_FAILURE);
+        }
+        
+        slots = qemu_opt_get_number(opts, "slots", 0);
+        if ((sz > ram_size) && !slots) {
+            fprintf(stderr, "qemu: invalid %s: maxmem "
+                    "(%" PRIu64 ") more than initial memory ("
+                    RAM_ADDR_FMT ") but no hotplug slots where "
+                    "specified\n", error_description, sz, ram_size);
+            exit(EXIT_FAILURE);
+        }
+        
+        if ((sz <= ram_size) && slots) {
+            fprintf(stderr, "qemu: invalid %s:  %"
+                    PRIu64 " hotplug slots where specified but "
+                    "maxmem (%" PRIu64 ") <= initial memory ("
+                    RAM_ADDR_FMT ")\n", error_description, slots, sz, ram_size);
+            exit(EXIT_FAILURE);
+        }
+        maxram_size = sz;
+        ram_slots = slots;
+    } else if ((!maxmem_str && slots_str) ||
+               (maxmem_str && !slots_str)) {
+        fprintf(stderr, "qemu: invalid %s: missing "
+                "'%s' option\n", error_description,
+                slots_str ? "maxmem" : "slots");
+        exit(EXIT_FAILURE);
+    }
+
+
+    /* store value for the future use */
+    qemu_opt_set_number(opts, "size", ram_size);
+
+    *p_ram_size = ram_size;
+    *p_maxram_size = maxram_size;
+    *p_ram_slots = ram_slots;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     int i;
@@ -3300,92 +3402,15 @@ int main(int argc, char **argv, char **envp)
                 version();
                 exit(0);
                 break;
-            case QEMU_OPTION_m: {
-                uint64_t sz;
-                const char *mem_str;
-                const char *maxmem_str, *slots_str;
-
+            case QEMU_OPTION_m:
                 opts = qemu_opts_parse(qemu_find_opts("memory"),
                                        optarg, 1);
                 if (!opts) {
                     exit(EXIT_FAILURE);
                 }
-
-                mem_str = qemu_opt_get(opts, "size");
-                if (!mem_str) {
-                    error_report("invalid -m option, missing 'size' option");
-                    exit(EXIT_FAILURE);
-                }
-                if (!*mem_str) {
-                    error_report("missing 'size' option value");
-                    exit(EXIT_FAILURE);
-                }
-
-                sz = qemu_opt_get_size(opts, "size", ram_size);
-
-                /* Fix up legacy suffix-less format */
-                if (g_ascii_isdigit(mem_str[strlen(mem_str) - 1])) {
-                    uint64_t overflow_check = sz;
-
-                    sz <<= 20;
-                    if ((sz >> 20) != overflow_check) {
-                        error_report("too large 'size' option value");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-
-                /* backward compatibility behaviour for case "-m 0" */
-                if (sz == 0) {
-                    sz = default_ram_size;
-                }
-
-                sz = QEMU_ALIGN_UP(sz, 8192);
-                ram_size = sz;
-                if (ram_size != sz) {
-                    error_report("ram size too large");
-                    exit(EXIT_FAILURE);
-                }
-                maxram_size = ram_size;
-
-                maxmem_str = qemu_opt_get(opts, "maxmem");
-                slots_str = qemu_opt_get(opts, "slots");
-                if (maxmem_str && slots_str) {
-                    uint64_t slots;
-
-                    sz = qemu_opt_get_size(opts, "maxmem", 0);
-                    if (sz < ram_size) {
-                        fprintf(stderr, "qemu: invalid -m option value: maxmem "
-                                "(%" PRIu64 ") <= initial memory ("
-                                RAM_ADDR_FMT ")\n", sz, ram_size);
-                        exit(EXIT_FAILURE);
-                    }
-
-                    slots = qemu_opt_get_number(opts, "slots", 0);
-                    if ((sz > ram_size) && !slots) {
-                        fprintf(stderr, "qemu: invalid -m option value: maxmem "
-                                "(%" PRIu64 ") more than initial memory ("
-                                RAM_ADDR_FMT ") but no hotplug slots where "
-                                "specified\n", sz, ram_size);
-                        exit(EXIT_FAILURE);
-                    }
-
-                    if ((sz <= ram_size) && slots) {
-                        fprintf(stderr, "qemu: invalid -m option value:  %"
-                                PRIu64 " hotplug slots where specified but "
-                                "maxmem (%" PRIu64 ") <= initial memory ("
-                                RAM_ADDR_FMT ")\n", slots, sz, ram_size);
-                        exit(EXIT_FAILURE);
-                    }
-                    maxram_size = sz;
-                    ram_slots = slots;
-                } else if ((!maxmem_str && slots_str) ||
-                           (maxmem_str && !slots_str)) {
-                    fprintf(stderr, "qemu: invalid -m option value: missing "
-                            "'%s' option\n", slots_str ? "maxmem" : "slots");
-                    exit(EXIT_FAILURE);
-                }
+                process_memory_opts(opts, &ram_size, &maxram_size,
+                                    &ram_slots, default_ram_size, true);
                 break;
-            }
 #ifdef CONFIG_TPM
             case QEMU_OPTION_tpmdev:
                 if (tpm_config_parse(qemu_find_opts("tpmdev"), optarg) < 0) {
@@ -4236,8 +4261,9 @@ int main(int argc, char **argv, char **envp)
         exit(1);
     }
 
-    /* store value for the future use */
-    qemu_opt_set_number(qemu_find_opts_singleton("memory"), "size", ram_size);
+    process_memory_opts(qemu_find_opts_singleton("memory"),
+                        &ram_size, &maxram_size, &ram_slots,
+                        default_ram_size, false);
 
     if (qemu_opts_foreach(qemu_find_opts("device"), device_help_func, NULL, 0)
         != 0) {
