@@ -112,8 +112,11 @@ void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request)
     else
         delay = 64;
     struct rkvm_userspace_data preemption_data;
-    pkvm_userspace_entry(&preemption_data);
-    pkvm_userspace_spend(&preemption_data, delay);
+    if (pkvm_userspace_entry && pkvm_userspace_exit) {
+        pkvm_userspace_entry(&preemption_data);
+        pkvm_userspace_spend(&preemption_data, delay);
+    }
     wait_on_ipc_connection(connection, pcie_request_wait_function, request);
-    pkvm_userspace_exit(&preemption_data);
+    if (pkvm_userspace_entry && pkvm_userspace_exit)
+        pkvm_userspace_exit(&preemption_data);
 }

@@ -2650,25 +2650,31 @@ int kvm_get_one_reg(CPUState *cs, uint64_t id, void *target)
     return r;
 }
 static void kvm_userspace_entry(struct rkvm_userspace_data *preemption_data) {
-    KVMState *s = kvm_state;
-    kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
-    if (do_rkvm_debug) {
-        printf("kvm_userspace_entry at %lld\n",
-               preemption_data->accumulate_ucc);
+    if (kvm_enabled()) {
+        KVMState *s = kvm_state;
+        kvm_vm_ioctl(s, RKVM_USERSPACE_ENTRY, preemption_data);
+        if (do_rkvm_debug) {
+            printf("kvm_userspace_entry at %lld\n",
+                   preemption_data->accumulate_ucc);
+        }
     }
 }
 
 static void kvm_userspace_exit(struct rkvm_userspace_data *preemption_data) {
-    KVMState *s = kvm_state;
-    kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
-    if (do_rkvm_debug) {
-        printf("kvm_userspace_exit at %lld\n",
-               preemption_data->accumulate_ucc);
+    if (kvm_enabled()) {
+        KVMState *s = kvm_state;
+        kvm_vm_ioctl(s, RKVM_USERSPACE_EXIT, preemption_data);
+        if (do_rkvm_debug) {
+            printf("kvm_userspace_exit at %lld\n",
+                   preemption_data->accumulate_ucc);
+        }
     }
 }
 
 static void kvm_userspace_spend(struct rkvm_userspace_data *preemption_data, unsigned time) {
-    preemption_data->accumulate_ucc += time;
+    if (kvm_enabled()) {
+        preemption_data->accumulate_ucc += time;
+    }
 }
 
 static int kvm_xfer(void *xfer_data, void *dest, const void *src, int len)
