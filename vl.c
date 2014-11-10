@@ -4265,6 +4265,8 @@ int main(int argc, char **argv, char **envp)
                         &ram_size, &maxram_size, &ram_slots,
                         default_ram_size, false);
 
+    configure_rtc(qemu_find_opts_singleton("rtc"));
+
     if (qemu_opts_foreach(qemu_find_opts("device"), device_help_func, NULL, 0)
         != 0) {
         exit(0);
