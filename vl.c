@@ -4358,14 +4358,9 @@ int main(int argc, char **argv, char **envp)
     qemu_spice_init();
 #endif
 
-    if (icount_opts) {
-        if (kvm_enabled() || xen_enabled()) {
-            fprintf(stderr, "-icount is not allowed with kvm or xen\n");
-            exit(1);
-        }
-        configure_icount(icount_opts, &error_abort);
-        qemu_opts_del(icount_opts);
-    }
+    icount_opts = qemu_find_opts_singleton("icount");
+    configure_icount(icount_opts, &error_abort);
+    qemu_opts_del(icount_opts);
 
     /* clean up network at qemu process termination */
     atexit(&net_cleanup);

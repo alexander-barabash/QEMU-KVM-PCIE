@@ -41,6 +41,7 @@
 #include "qemu/seqlock.h"
 #include "qapi-event.h"
 #include "hw/nmi.h"
+#include "hw/xen/xen.h"
 
 #ifndef _WIN32
 #include "qemu/compatfd.h"
@@ -506,6 +507,10 @@ void configure_icount(QemuOpts *opts, Error **errp)
             error_setg(errp, "Please specify shift option when using align");
         }
         return;
+    }
+    if (kvm_enabled() || xen_enabled()) {
+        fprintf(stderr, "icount is not supported with kvm or xen\n");
+        exit(1);
     }
     icount_align_option = qemu_opt_get_bool(opts, "align", false);
     icount_warp_timer = timer_new_ns(QEMU_CLOCK_REALTIME,
