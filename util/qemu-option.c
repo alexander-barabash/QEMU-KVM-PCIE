@@ -476,10 +476,62 @@ uint64_t qemu_opt_get_size_del(QemuOpts *opts, const char *name,
     return qemu_opt_get_size_helper(opts, name, defval, true);
 }
 
+/*
+ * If any substitution occurs, returns a new string.
+ * Otherwise, returns the original string.
+ */
+static char *qemu_substitute_env(char *str, size_t len)
+{
+    char *var_start, *var_end, *var, *var_value, *head, *tail, *result;
+    ssize_t head_len, var_len, tail_len;
+
+    var_start = g_strstr_len(str, len, "${");
+    if (var_start == NULL) {
+        return str;
+    }
+    var_end = g_strstr_len(var_start + 2, len - (var_start + 2 - str), "}");
+    if (var_end == NULL) {
+        return str;
+    }
+    head_len = var_start - str;
+    if (head_len > 0) {
+        head = g_strndup(str, head_len);
+    } else {
+        head = NULL;
+    }
+    var_len = var_end - (var_start + 2);
+    var = g_strndup(var_start + 2, var_len);
+    var_value = getenv(var);
+    g_free(var);
+    tail_len = (str + len) - (var_end + 1);
+    if (tail_len > 0) {
+        tail = qemu_substitute_env(var_end + 1, tail_len);
+    } else {
+        tail = NULL;
+    }
+    result = g_strdup_printf("%s%s%s", head ? head : "",
+                             var_value ? var_value : "", tail ? tail : "");
+    if (head != NULL) {
+        g_free(head);
+    }
+    if (tail != NULL) {
+        g_free(tail);
+    }
+    return result;
+}
+
 static void qemu_opt_parse(QemuOpt *opt, Error **errp)
 {
     if (opt->desc == NULL)
         return;
+
+    if (opt->str != NULL) {
+        char *substituted = qemu_substitute_env(opt->str, strlen(opt->str));
+        if (substituted != opt->str) {
+            g_free(opt->str);
+            opt->str = substituted;
+        }
+    }
 
     switch (opt->desc->type) {
     case QEMU_OPT_STRING:
