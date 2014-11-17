@@ -2924,6 +2924,14 @@ out:
     return 0;
 }
 
+static void process_machine_opts(QemuOpts *opts, MachineClass **p_machine_class)
+{
+    const char *machine_type = qemu_opt_get(opts, "type");
+    if (machine_type) {
+        *p_machine_class = machine_parse(machine_type);
+    }
+}
+
 static void process_memory_opts(QemuOpts *opts,
                                 ram_addr_t *p_ram_size,
                                 ram_addr_t *p_maxram_size,
@@ -3177,7 +3185,7 @@ int main(int argc, char **argv, char **envp)
             }
             switch(popt->index) {
             case QEMU_OPTION_M:
-                machine_class = machine_parse(optarg);
+                qemu_opts_set(qemu_find_opts("machine"), 0, "type", optarg);
                 break;
             case QEMU_OPTION_no_kvm_irqchip: {
                 olist = qemu_find_opts("machine");
@@ -3725,10 +3733,6 @@ int main(int argc, char **argv, char **envp)
                 if (!opts) {
                     exit(1);
                 }
-                optarg = qemu_opt_get(opts, "type");
-                if (optarg) {
-                    machine_class = machine_parse(optarg);
-                }
                 break;
              case QEMU_OPTION_no_kvm:
                 olist = qemu_find_opts("machine");
@@ -4042,6 +4046,7 @@ int main(int argc, char **argv, char **envp)
     }
 #endif
 
+    process_machine_opts(qemu_find_opts_singleton("machine"), &machine_class);
     if (machine_class == NULL) {
         fprintf(stderr, "No machine specified, and there is no default.\n"
                 "Use -machine help to list supported machines!\n");
