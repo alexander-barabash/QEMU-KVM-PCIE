@@ -143,6 +143,9 @@ int qemu_read_default_config_files(bool userconfig)
 {
     int ret;
     struct defconfig_file *f;
+    const char *qemu_config_files;
+    gchar **config_files;
+    gchar **config;
 
     for (f = default_config_files; f->filename; f++) {
         if (!userconfig && f->userconfig) {
@@ -152,6 +155,18 @@ int qemu_read_default_config_files(bool userconfig)
         if (ret < 0 && ret != -ENOENT) {
             return ret;
         }
+    }
+
+    if (userconfig &&
+        ((qemu_config_files = getenv("QEMU_CONFIG_FILES"))) &&
+        ((config_files = g_strsplit(qemu_config_files, ":", 0)))) {
+        for (config = config_files; *config; config++) {
+            ret = qemu_read_config_file(*config);
+            if (ret < 0 && ret != -ENOENT) {
+                return ret;
+            }
+        }
+        g_strfreev(config_files);
     }
 
     return 0;
