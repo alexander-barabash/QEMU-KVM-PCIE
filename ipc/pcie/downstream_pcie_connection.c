@@ -34,6 +34,24 @@
 #include "ipc/ipc_debug.h"
 IPC_DEBUG_ON(REQUESTS);
 
+static inline void free_data_ipc_trans(void *transaction)
+{
+    free_data_ipc_packet(transaction - sizeof(uint64_t));
+}
+
+static inline void *ipc_packet_trans(void *packet)
+{
+    return ipc_packet_data(packet) + sizeof(uint64_t);
+}
+
+static inline void pcie_request_done(PCIeRequest *request) {
+    if (request->transaction) {
+        free_data_ipc_trans(request->transaction);
+        request->transaction = NULL;
+    }
+    request->waiting = false;
+}
+
 void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                   PCIDevice *pci_dev,
                                   hwaddr addr, uint64_t val, unsigned size)
@@ -304,7 +322,7 @@ static bool handle_completion(void *transaction, DownstreamPCIeConnection *conne
                                 decoded.tag);
     if ((request == NULL) || !request->waiting) {
         /* Nobody waits for this. */
-        free_data_ipc_packet(request->transaction);
+        free_data_ipc_trans(request->transaction);
     } else {
         pcie_request_ready(request, transaction);
         /* NOTE: transaction is now owned by the requester. */
@@ -440,7 +458,7 @@ static bool handle_request(void *transaction, DownstreamPCIeConnection *connecti
 
 static void handle_packet(IPCPacket *packet, IPCConnection *base_connection)
 {
-    uint8_t *transaction = ipc_packet_data(packet);
+    uint8_t *transaction = ipc_packet_trans(packet);
     DownstreamPCIeConnection *connection = (DownstreamPCIeConnection *)base_connection;
     if (pcie_trans_is_completion(transaction)) {
         handle_completion(transaction, connection);

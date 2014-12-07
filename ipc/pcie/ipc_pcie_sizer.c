@@ -23,26 +23,33 @@
 #include "ipc/pcie/ipc_pcie_sizer.h"
 #include "ipc/pcie/pcie_trans.h"
 
+static const void *get_transaction(const void *ipc_header)
+{
+    return ipc_header + sizeof(uint64_t);
+}
+
 static unsigned pcie_get_packet_size(const void *ipc_header)
 {
-    return pcie_trans_get_total_size_in_bytes(ipc_header);
+    return sizeof(uint64_t) +
+        pcie_trans_get_total_size_in_bytes(get_transaction(ipc_header));
 }
 
 static bool pcie_is_packet_completion(const void *ipc_packet)
 {
-    return pcie_trans_is_completion(ipc_packet);
+    return pcie_trans_is_completion(get_transaction(ipc_packet));
 }
 
 static bool pcie_does_packet_require_completion(const void *ipc_packet)
 {
-    return (!pcie_is_packet_completion(ipc_packet) &&
-            !pcie_trans_is_posted_request(ipc_packet));
+    const void *transaction = get_transaction(ipc_packet);
+    return (!pcie_trans_is_completion(transaction) &&
+            !pcie_trans_is_posted_request(transaction));
 }
 
 IPCSizer *ipc_pcie_sizer(void)
 {
     static IPCSizer pcie_sizer = {
-        .ipc_header_size = 12,
+        .ipc_header_size = sizeof(uint64_t) + 12,
         .get_packet_size = pcie_get_packet_size,
         .is_packet_completion = pcie_is_packet_completion,
         .does_packet_require_completion = pcie_does_packet_require_completion,

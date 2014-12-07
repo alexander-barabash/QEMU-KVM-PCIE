@@ -58,12 +58,4 @@ static inline void pcie_request_ready(PCIeRequest *request,
     request->ready = true;
 }
 
-static inline void pcie_request_done(PCIeRequest *request) {
-    if (request->transaction) {
-        free_data_ipc_packet(request->transaction);
-        request->transaction = NULL;
-    }
-    request->waiting = false;
-}
-
 void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request);
