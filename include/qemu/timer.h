@@ -748,6 +748,7 @@ int64_t cpu_get_icount(void);
 int64_t cpu_get_clock(void);
 int64_t cpu_get_clock_offset(void);
 int64_t cpu_icount_to_ns(int64_t icount);
+int64_t cpu_ns_to_icount(uint64_t ns);
 
 /*******************************************/
 /* host CPU ticks (if available) */

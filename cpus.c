@@ -192,6 +192,25 @@ int64_t cpu_icount_to_ns(int64_t icount)
     return icount << icount_time_shift;
 }
 
+int64_t cpu_ns_to_icount(uint64_t ns)
+{
+    return ns >> icount_time_shift;
+}
+
+static void double_cpu_speed(void)
+{
+    if (icount_time_shift > 0) {
+        icount_time_shift--;
+    }
+}
+
+static void half_cpu_speed(void)
+{
+    if (icount_time_shift < MAX_ICOUNT_SHIFT) {
+        icount_time_shift++;
+    }
+}
+
 /* return the host CPU cycle counter and handle stop/restart */
 /* Caller must hold the BQL */
 int64_t cpu_get_ticks(void)
@@ -319,20 +338,18 @@ static void icount_adjust(void)
     delta = cur_icount - cur_time;
     /* FIXME: This is a very crude algorithm, somewhat prone to oscillation.  */
     if (delta > 0
-        && last_delta + ICOUNT_WOBBLE < delta * 2
-        && icount_time_shift > 0) {
+        && last_delta + ICOUNT_WOBBLE < delta * 2) {
         /* The guest is getting too far ahead.  Slow time down.  */
-        icount_time_shift--;
+        double_cpu_speed();
     }
     if (delta < 0
-        && last_delta - ICOUNT_WOBBLE > delta * 2
-        && icount_time_shift < MAX_ICOUNT_SHIFT) {
+        && last_delta - ICOUNT_WOBBLE > delta * 2) {
         /* The guest is getting too far behind.  Speed time up.  */
-        icount_time_shift++;
+        half_cpu_speed();
     }
     last_delta = delta;
     timers_state.qemu_icount_bias = cur_icount
-                              - (timers_state.qemu_icount << icount_time_shift);
+                              - cpu_icount_to_ns(timers_state.qemu_icount);
     seqlock_write_unlock(&timers_state.vm_clock_seqlock);
 }
 
@@ -353,7 +370,7 @@ static void icount_adjust_vm(void *opaque)
 
 static int64_t qemu_icount_round(int64_t count)
 {
-    return (count + (1 << icount_time_shift) - 1) >> icount_time_shift;
+    return cpu_ns_to_icount(count + cpu_icount_to_ns(1) - 1);
 }
 
 static void icount_warp_rt(void *opaque)
