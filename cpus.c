@@ -187,6 +187,11 @@ int64_t cpu_get_icount(void)
     return icount;
 }
 
+static void set_icount_time_shift(int value)
+{
+    icount_time_shift = value;
+}
+
 int64_t cpu_icount_to_ns(int64_t icount)
 {
     return icount << icount_time_shift;
@@ -555,7 +560,7 @@ void configure_icount(QemuOpts *opts, Error **errp)
                                           icount_warp_rt, NULL);
     if (strcmp(option, "auto") != 0) {
         errno = 0;
-        icount_time_shift = strtol(option, &rem_str, 0);
+        set_icount_time_shift(strtol(option, &rem_str, 0));
         if (errno != 0 || *rem_str != '\0' || !strlen(option)) {
             error_setg(errp, "icount: Invalid shift value");
         }
@@ -569,7 +574,7 @@ void configure_icount(QemuOpts *opts, Error **errp)
 
     /* 125MIPS seems a reasonable initial guess at the guest speed.
        It will be corrected fairly quickly anyway.  */
-    icount_time_shift = 3;
+    set_icount_time_shift(3);
 
     /* Have both realtime and virtual time triggers for speed adjustment.
        The realtime trigger catches emulated time passing too slowly,
