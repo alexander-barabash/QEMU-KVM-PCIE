@@ -548,6 +548,9 @@ static QemuOptsList qemu_icount_opts = {
             .name = "shift",
             .type = QEMU_OPT_STRING,
         }, {
+            .name = "mips",
+            .type = QEMU_OPT_STRING,
+        }, {
             .name = "align",
             .type = QEMU_OPT_BOOL,
         },

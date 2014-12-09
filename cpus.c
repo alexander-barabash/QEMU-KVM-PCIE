@@ -192,6 +192,15 @@ static void set_icount_time_shift(int value)
     icount_to_ns_factor = 1ull << value;
 }
 
+static void set_icount_mips(int value)
+{
+    icount_to_ns_factor = 1000;
+    icount_to_ns_factor /= value;
+    if (icount_to_ns_factor < 1) {
+        icount_to_ns_factor = 1;
+    }
+}
+
 int64_t cpu_icount_to_ns(int64_t icount)
 {
     return icount * icount_to_ns_factor;
@@ -539,17 +548,50 @@ static const VMStateDescription vmstate_timers = {
 
 void configure_icount(QemuOpts *opts, Error **errp)
 {
-    const char *option;
+    const char *icount_shift_option;
+    const char *icount_mips_option;
+    bool auto_adjust_icounter = false;
     char *rem_str = NULL;
 
     seqlock_init(&timers_state.vm_clock_seqlock, NULL);
     vmstate_register(NULL, 0, &vmstate_timers, &timers_state);
-    option = qemu_opt_get(opts, "shift");
-    if (!option) {
+    icount_shift_option = qemu_opt_get(opts, "shift");
+    icount_mips_option = qemu_opt_get(opts, "mips");
+    if (!icount_shift_option && !icount_mips_option) {
         if (qemu_opt_get(opts, "align") != NULL) {
-            error_setg(errp, "Please specify shift option when using align");
+            error_setg(errp,
+                       "Please specify shift or mips option when using align");
         }
         return;
+    }
+    if (icount_shift_option && icount_mips_option) {
+        error_setg(errp,
+                   "You cannot specify shift and mips options simultaneously");
+    }
+    if (icount_shift_option) {
+        if (strcmp(icount_shift_option, "auto") != 0) {
+            errno = 0;
+            set_icount_time_shift(strtol(icount_shift_option, &rem_str, 0));
+            if (errno != 0 || *rem_str != '\0' ||
+                !strlen(icount_shift_option)) {
+                error_setg(errp, "icount: Invalid shift value");
+            }
+            auto_adjust_icounter = false;
+        } else {
+            auto_adjust_icounter = true;
+        }
+    } else {
+        if (strcmp(icount_mips_option, "auto") != 0) {
+            errno = 0;
+            set_icount_mips(strtol(icount_mips_option, &rem_str, 0));
+            if (errno != 0 || *rem_str != '\0' ||
+                !strlen(icount_mips_option)) {
+                error_setg(errp, "icount: Invalid mips value");
+            }
+            auto_adjust_icounter = false;
+        } else {
+            auto_adjust_icounter = true;
+        }
     }
     if (kvm_enabled() || xen_enabled()) {
         fprintf(stderr, "icount is not supported with kvm or xen\n");
@@ -558,15 +600,12 @@ void configure_icount(QemuOpts *opts, Error **errp)
     icount_align_option = qemu_opt_get_bool(opts, "align", false);
     icount_warp_timer = timer_new_ns(QEMU_CLOCK_REALTIME,
                                           icount_warp_rt, NULL);
-    if (strcmp(option, "auto") != 0) {
-        errno = 0;
-        set_icount_time_shift(strtol(option, &rem_str, 0));
-        if (errno != 0 || *rem_str != '\0' || !strlen(option)) {
-            error_setg(errp, "icount: Invalid shift value");
-        }
+    if (!auto_adjust_icounter) {
         use_icount = 1;
         return;
-    } else if (icount_align_option) {
+    }
+
+    if (icount_align_option) {
         error_setg(errp, "shift=auto and align=on are incompatible");
     }
 
