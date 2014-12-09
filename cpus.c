@@ -137,8 +137,8 @@ typedef struct TimersState {
 
 static TimersState timers_state;
 
-/* Return the virtual CPU time, based on the instruction counter.  */
-static int64_t cpu_get_icount_locked(void)
+/* Return the instruction counter.  */
+static int64_t cpu_get_instruction_counter_locked(void)
 {
     int64_t icount;
     CPUState *cpu = current_cpu;
@@ -150,7 +150,28 @@ static int64_t cpu_get_icount_locked(void)
         }
         icount -= (cpu->icount_decr.u16.low + cpu->icount_extra);
     }
-    return timers_state.qemu_icount_bias + cpu_icount_to_ns(icount);
+    return icount;
+}
+
+/* Return the virtual CPU time, based on the instruction counter.  */
+static int64_t cpu_get_icount_locked(void)
+{
+    return
+        timers_state.qemu_icount_bias +
+        cpu_icount_to_ns(cpu_get_instruction_counter_locked());
+}
+
+int64_t cpu_get_instruction_counter(void)
+{
+    int64_t icount;
+    unsigned start;
+
+    do {
+        start = seqlock_read_begin(&timers_state.vm_clock_seqlock);
+        icount = cpu_get_instruction_counter_locked();
+    } while (seqlock_read_retry(&timers_state.vm_clock_seqlock, start));
+
+    return icount;
 }
 
 int64_t cpu_get_icount(void)
