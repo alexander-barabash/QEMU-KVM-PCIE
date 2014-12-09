@@ -108,7 +108,7 @@ static bool all_cpu_threads_idle(void)
 
 static int64_t vm_clock_warp_start = -1;
 /* Conversion factor from emulated instructions to virtual clock ticks.  */
-static int icount_time_shift;
+static uint64_t icount_to_ns_factor;
 /* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
 #define MAX_ICOUNT_SHIFT 10
 
@@ -189,30 +189,30 @@ int64_t cpu_get_icount(void)
 
 static void set_icount_time_shift(int value)
 {
-    icount_time_shift = value;
+    icount_to_ns_factor = 1ull << value;
 }
 
 int64_t cpu_icount_to_ns(int64_t icount)
 {
-    return icount << icount_time_shift;
+    return icount * icount_to_ns_factor;
 }
 
 int64_t cpu_ns_to_icount(uint64_t ns)
 {
-    return ns >> icount_time_shift;
+    return ns / icount_to_ns_factor;
 }
 
 static void double_cpu_speed(void)
 {
-    if (icount_time_shift > 0) {
-        icount_time_shift--;
+    if (icount_to_ns_factor > 1) {
+        icount_to_ns_factor /= 2;
     }
 }
 
 static void half_cpu_speed(void)
 {
-    if (icount_time_shift < MAX_ICOUNT_SHIFT) {
-        icount_time_shift++;
+    if (icount_to_ns_factor < 1ull << MAX_ICOUNT_SHIFT) {
+        icount_to_ns_factor *= 2;
     }
 }
 
