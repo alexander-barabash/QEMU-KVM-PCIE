@@ -39,6 +39,7 @@
 #include "qemu/main-loop.h"
 #include "qemu/bitmap.h"
 #include "qemu/seqlock.h"
+#include "qemu/host-utils.h"
 #include "qapi-event.h"
 #include "hw/nmi.h"
 #include "hw/xen/xen.h"
@@ -107,8 +108,20 @@ static bool all_cpu_threads_idle(void)
 /* Protected by TimersState seqlock */
 
 static int64_t vm_clock_warp_start = -1;
-/* Conversion factor from emulated instructions to virtual clock ticks.  */
-static uint64_t icount_to_ns_factor;
+
+#ifdef CONFIG_INT128
+typedef uint64_t icount_multiplier_type;
+#else
+typedef uint32_t icount_multiplier_type;
+#endif
+/* Conversion from emulated instructions to virtual clock ticks.  */
+static int icount_rshift;
+static icount_multiplier_type icount_multiplier;
+/* Conversion from virtual clock ticks to emulated instructions.  */
+static int icount_lshift;
+static uint32_t icount_divisor;
+static uint64_t one_icount_ns;
+static uint64_t one_ns_icount;
 /* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
 #define MAX_ICOUNT_SHIFT 10
 
@@ -187,42 +200,145 @@ int64_t cpu_get_icount(void)
     return icount;
 }
 
-static void set_icount_time_shift(int value)
+static void set_icount_lshift_and_divisor(int lshift, uint32_t divisor)
 {
-    icount_to_ns_factor = 1ull << value;
+    int leading_zeros = clz32(divisor);
+    if ((divisor & (divisor - 1)) == 0) {
+        /* For a power of two, just leave the shifts. */
+        icount_lshift = lshift + leading_zeros - 31;
+        icount_rshift = - icount_lshift;
+        icount_divisor = 1;
+        icount_multiplier = 1;
+    } else {
+        icount_lshift = lshift + leading_zeros;
+        icount_divisor = divisor << leading_zeros;
+        /* Here 2^31 <     icount_divisor    < 2^32 */
+        /*      2^31 < 2^63 / icount_divisor < 2^32 */
+        /*      2^63 < 2^95 / icount_divisor < 2^64 */
+#ifdef CONFIG_INT128
+        icount_rshift = 95 - icount_lshift;
+        icount_multiplier = (((__uint128_t)1u) << 95) / icount_divisor;
+#else
+        icount_rshift = 63 - icount_lshift;
+        icount_multiplier = (1ull << 63) / icount_divisor;
+#endif
+    }
+    one_icount_ns = cpu_icount_to_ns(1);
+    one_ns_icount = cpu_ns_to_icount(1);
 }
 
-static void set_icount_mips(int value)
+static bool set_icount_time_shift(int value)
 {
-    icount_to_ns_factor = 1000;
-    icount_to_ns_factor /= value;
-    if (icount_to_ns_factor < 1) {
-        icount_to_ns_factor = 1;
+    if ((value <= 0) || (value > 10)) {
+        return false;
+    }
+    set_icount_lshift_and_divisor(value, 1);
+    return true;
+}
+
+static bool set_icount_mips(int value)
+{
+    if ((value < 0) || (value > MAX_ICOUNT_SHIFT)) {
+        return false;
+    }
+    set_icount_lshift_and_divisor(10, value);
+    return true;
+}
+
+static inline uint64_t do_rshift64(uint64_t num, int rshift)
+{
+    if (rshift > 0) {
+        return num >> rshift;
+    } else if (rshift < 0) {
+        return num << -rshift;
+    } else {
+        return num;
     }
 }
 
-int64_t cpu_icount_to_ns(int64_t icount)
+#ifdef CONFIG_INT128
+static inline __uint128_t do_rshift128(__uint128_t num, int rshift)
 {
-    return icount * icount_to_ns_factor;
+    if (rshift > 0) {
+        return num >> rshift;
+    } else if (rshift < 0) {
+        return num << -rshift;
+    } else {
+        return num;
+    }
 }
 
+/*
+ * Computes floor(num * 2 ^ (-rshift) * multiplier) mod 2^64.
+ */
+static uint64_t mul_rshift(uint64_t num, uint64_t multiplier, int rshift)
+{
+    if (multiplier == 1) {
+        return do_rshift64(num, rshift);
+    } else {
+        return do_rshift128((__uint128_t)num * multiplier, rshift);
+    }
+}
+
+#else
+/*
+ * Computes floor(num * 2 ^ (-rshift) * multiplier) mod 2^64.
+ */
+static uint64_t mul_rshift(uint64_t num, uint32_t multiplier, int rshift)
+{
+    if (multiplier == 1) {
+        return do_rshift64(num, rshift);
+    } else {
+        uint64_t low = ((uint64_t)(uint32_t)num) * multiplier;
+        uint64_t high = (num >> 32) * multiplier;
+
+        if (rshift == 0) {
+            return low + (high << 32);
+        } else if (rshift < 0) {
+            return (low + (high << 32)) << -rshift;
+        } else {
+            if (rshift == 32) {
+                return (low >> 32) + high;
+            } else if (rshift < 32) {
+                return (low >> rshift) + (high << (32 - rshift));
+            } else {
+                return ((low >> 32) + high) >> (rshift - 32);
+            }
+        }
+    }
+}
+#endif
+
+/*
+ * Converts instruction counter into time in nanoseconds at the beginning.
+ */
+int64_t cpu_icount_to_ns(int64_t icount)
+{
+    return mul_rshift(icount, icount_multiplier, icount_rshift);
+}
+
+/*
+ * Converts interval in nanoseconds into interval in instructions.
+ */
 int64_t cpu_ns_to_icount(uint64_t ns)
 {
-    return ns / icount_to_ns_factor;
+    return mul_rshift(ns, icount_divisor, icount_lshift);
 }
 
 static void double_cpu_speed(void)
 {
-    if (icount_to_ns_factor > 1) {
-        icount_to_ns_factor /= 2;
-    }
+    --icount_rshift;
+    ++icount_lshift;
+    one_icount_ns = cpu_icount_to_ns(1);
+    one_ns_icount = cpu_ns_to_icount(1);
 }
 
 static void half_cpu_speed(void)
 {
-    if (icount_to_ns_factor < 1ull << MAX_ICOUNT_SHIFT) {
-        icount_to_ns_factor *= 2;
-    }
+    ++icount_rshift;
+    --icount_lshift;
+    one_icount_ns = cpu_icount_to_ns(1);
+    one_ns_icount = cpu_ns_to_icount(1);
 }
 
 /* return the host CPU cycle counter and handle stop/restart */
@@ -382,9 +498,20 @@ static void icount_adjust_vm(void *opaque)
     icount_adjust();
 }
 
-static int64_t qemu_icount_round(int64_t count)
+static int64_t qemu_icount_round(uint32_t ns)
 {
-    return cpu_ns_to_icount(count + cpu_icount_to_ns(1) - 1);
+    uint64_t result;
+    if (one_icount_ns > 1) {
+        ns += one_icount_ns - 1;
+    }
+    result = cpu_ns_to_icount(ns);
+    if (one_ns_icount > 1) {
+        result += one_ns_icount - 1;
+    }
+    if (result == 0) {
+        result = 1;
+    }
+    return result;
 }
 
 static void icount_warp_rt(void *opaque)
@@ -571,10 +698,14 @@ void configure_icount(QemuOpts *opts, Error **errp)
     if (icount_shift_option) {
         if (strcmp(icount_shift_option, "auto") != 0) {
             errno = 0;
-            set_icount_time_shift(strtol(icount_shift_option, &rem_str, 0));
+            if (!set_icount_time_shift(strtol(icount_shift_option, &rem_str, 0))) {
+                error_setg(errp, "icount: Invalid shift value");
+                return;
+            }
             if (errno != 0 || *rem_str != '\0' ||
                 !strlen(icount_shift_option)) {
                 error_setg(errp, "icount: Invalid shift value");
+                return;
             }
             auto_adjust_icounter = false;
         } else {
@@ -583,10 +714,14 @@ void configure_icount(QemuOpts *opts, Error **errp)
     } else {
         if (strcmp(icount_mips_option, "auto") != 0) {
             errno = 0;
-            set_icount_mips(strtol(icount_mips_option, &rem_str, 0));
+            if (!set_icount_mips(strtol(icount_mips_option, &rem_str, 0))) {
+                error_setg(errp, "icount: Invalid mips value");
+                return;
+            }
             if (errno != 0 || *rem_str != '\0' ||
                 !strlen(icount_mips_option)) {
                 error_setg(errp, "icount: Invalid mips value");
+                return;
             }
             auto_adjust_icounter = false;
         } else {
