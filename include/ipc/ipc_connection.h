@@ -48,6 +48,11 @@ struct IPCPacket {
     unsigned packet_size;
 };
 
+static inline IPCConnection *ipc_channel_connection(IPCChannel *channel)
+{
+    return (IPCConnection *)(((uint8_t *)channel) - offsetof(IPCConnection, channel));
+}
+
 static inline uint8_t *ipc_packet_data(IPCPacket *packet)
 {
     return (uint8_t *)(packet + 1);
