@@ -43,6 +43,7 @@ static bool pcie_does_packet_require_completion(const void *ipc_packet)
 {
     const void *transaction = get_transaction(ipc_packet);
     return (!pcie_trans_is_completion(transaction) &&
+            !pcie_trans_is_time_message(transaction) &&
             !pcie_trans_is_posted_request(transaction));
 }
 
