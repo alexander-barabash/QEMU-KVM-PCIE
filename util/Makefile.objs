@@ -16,3 +16,4 @@ util-obj-y += getauxval.o
 util-obj-y += readline.o
 util-obj-y += rfifolock.o
 util-obj-y += pump.o
+util-obj-y += bstream.o bscript.o bscript_value.o
