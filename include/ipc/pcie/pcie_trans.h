@@ -46,6 +46,11 @@ typedef enum PCIE_Message_Code {
     VENDOR_DEFINED_MESSAGE_TYPE1 = 0x7f,
 } PCIE_Message_Code;
 
+typedef enum PCIE_Message_Vendor_ID {
+    SPECIAL_MESSAGE_VENDOR_ID = 0,
+    TIME_MESSAGE_VENDOR_ID = 1,
+} PCIE_Message_Vendor_ID;
+
 typedef enum PCIE_Completion_Status {
   SUCCESSFUL_COMPLETION = 0x0,
   UNSUPPORTED_REQUEST = 0x1,
@@ -274,6 +279,17 @@ uint32_t pcie_trans_get_vendor_defined_message_vendor_def(const uint8_t *trans_d
                       (uint32_t)(byte1 << 8) |
                       (uint32_t)(byte2 << 16) |
                       (uint32_t)(byte3 << 24));
+}
+
+static inline
+bool pcie_trans_is_time_message(const uint8_t *trans_data)
+{
+    return
+        pcie_trans_is_message_transaction(trans_data) &&
+        (pcie_trans_get_message_code(trans_data)
+         == VENDOR_DEFINED_MESSAGE_TYPE0) &&
+        (pcie_trans_get_vendor_defined_message_vendor_id(trans_data)
+         == TIME_MESSAGE_VENDOR_ID);
 }
 
 static inline
@@ -1108,12 +1124,27 @@ void pcie_trans_encode_special_msg(uint8_t trans_data[16],
                                        tag,
                                        /* size = */ 0);
     
-    pcie_trans_set_vendor_defined_message_vendor_id(trans_data, /* vendor_id = */ 0);
+    pcie_trans_set_vendor_defined_message_vendor_id(trans_data, SPECIAL_MESSAGE_VENDOR_ID);
     pcie_trans_set_vendor_defined_message_vendor_bytes(trans_data, 
                                                        (uint8_t)bus_num,
                                                        (uint8_t)((dev_num << 3) | func_num),
                                                        (uint8_t)(external_device_id & 0xFF),
                                                        (uint8_t)(external_device_id >> 8));
+}
+
+static inline
+void pcie_trans_encode_time_msg(uint8_t trans_data[16],
+                                uint16_t requester_id,
+                                uint8_t tag) {
+    pcie_trans_encode_msg_request_base(trans_data,
+                                       LOCAL_ROUTING,
+                                       /* message_code = */ VENDOR_DEFINED_MESSAGE_TYPE0,
+                                       /* with_data = */ false,
+                                       requester_id,
+                                       tag,
+                                       /* size = */ 0);
+    
+    pcie_trans_set_vendor_defined_message_vendor_id(trans_data, TIME_MESSAGE_VENDOR_ID);
 }
 
 static inline
