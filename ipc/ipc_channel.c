@@ -33,7 +33,7 @@
 #include "ipc/ipc_debug.h"
 IPC_DEBUG_ON(CHANNEL_DATA);
 
-bool setup_ipc_channel(IPCChannel *channel,
+bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
                        const char *socket_path, bool use_abstract_path)
 {
     struct sockaddr_un addr;
@@ -83,6 +83,7 @@ bool setup_ipc_channel(IPCChannel *channel,
         fprintf(stderr, "Failed to create IPC socket..\n");
         return false;
     }
+    channel->ops = ops;
     return true;
 }
 

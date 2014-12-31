@@ -25,20 +25,30 @@
 #include "ipc/pcie/pcie_trans.h"
 #include "ipc/ipc_channel.h"
 
-static inline uint64_t ipc_pcie_get_current_time(void)
+static inline bool
+send_ipc_pcie_transaction_header_with_time(IPCChannel *channel,
+                                           const uint8_t *trans_data,
+                                           uint64_t time)
 {
-    return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    return
+        write_ipc_channel_data(channel, &time, sizeof(time)) &&
+        write_ipc_channel_data(channel, trans_data,
+                               pcie_trans_get_header_size(trans_data));
 }
 
 static inline bool
 send_ipc_pcie_transaction_header(IPCChannel *channel,
                                  const uint8_t *trans_data)
 {
-    uint64_t time = ipc_pcie_get_current_time();
-    return
-        write_ipc_channel_data(channel, &time, sizeof(time)) &&
-        write_ipc_channel_data(channel, trans_data,
-                               pcie_trans_get_header_size(trans_data));
+    uint64_t time = channel->ops->get_current_time_ns(channel);
+    if (send_ipc_pcie_transaction_header_with_time(channel,
+                                                   trans_data,
+                                                   time)) {
+        channel->ops->rearm_timer(channel, time);
+        return true;
+    } else {
+        return false;
+    }
 }
 
 static inline bool
@@ -331,6 +341,20 @@ send_ipc_pcie_special_msg(IPCChannel *channel,
                                   func_num,
                                   external_device_id);
     return send_ipc_pcie_transaction_header(channel, trans_data);
+}
+
+static inline bool
+send_ipc_pcie_time_msg(IPCChannel *channel,
+                       uint16_t requester_id,
+                       uint8_t tag)
+{
+    uint64_t time = channel->ops->get_current_time_ns(channel);
+    uint8_t trans_data[16];
+    pcie_trans_encode_time_msg(trans_data,
+                               requester_id,
+                               tag);
+    return send_ipc_pcie_transaction_header_with_time(channel, trans_data,
+                                                      time);
 }
 
 

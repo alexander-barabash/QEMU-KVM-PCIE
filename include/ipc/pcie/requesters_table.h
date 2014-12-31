@@ -27,6 +27,7 @@
 
 typedef struct PCIeRequest {
     void *transaction;
+    bool is_time_request;
     bool ready;
     bool waiting;
 } PCIeRequest;

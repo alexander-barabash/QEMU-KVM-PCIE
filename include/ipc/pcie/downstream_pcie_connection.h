@@ -28,11 +28,21 @@ typedef struct DownstreamPCIeConnection DownstreamPCIeConnection;
 
 struct DownstreamPCIeConnection {
     IPCConnection connection;
+    PCIDevice *pci_dev;
     uint32_t pci_bus_num;
     AddressSpace *dma_as;
     AddressSpace *io_as;
     GHashTable *requesters_table;
+    QEMUTimer *timer;
 };
+
+static inline DownstreamPCIeConnection *
+downstream_by_ipc_connection(IPCConnection *ipc_connection)
+{
+    return (DownstreamPCIeConnection *)
+        (((uint8_t *)ipc_connection) -
+         offsetof(DownstreamPCIeConnection, connection));
+}
 
 DownstreamPCIeConnection *init_pcie_downstream_ipc(const char *socket_path,
                                                    bool use_abstract_path,
@@ -65,3 +75,8 @@ uint32_t read_downstream_pcie_config(DownstreamPCIeConnection *connection,
 void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
                                       PCIDevice *pci_dev,
                                       uint16_t external_device_id);
+
+void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
+                                   PCIDevice *pci_dev);
+
+QEMUTimer *get_ipc_pcie_timer(DownstreamPCIeConnection *connection);

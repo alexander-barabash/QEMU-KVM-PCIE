@@ -27,12 +27,19 @@
 #include <stdbool.h>
 
 typedef struct IPCChannel IPCChannel;
+typedef struct IPCChannelOps IPCChannelOps;
+
+struct IPCChannelOps {
+    uint64_t (*get_current_time_ns)(IPCChannel *channel);
+    void (*rearm_timer)(IPCChannel *channel, uint64_t transaction_time);
+};
 
 struct IPCChannel {
     int fd;
+    IPCChannelOps *ops;
 };
 
-bool setup_ipc_channel(IPCChannel *channel,
+bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
                        const char *socket_path, bool use_abstract_path);
 
 bool read_ipc_channel_data(IPCChannel *channel,
