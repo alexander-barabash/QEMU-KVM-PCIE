@@ -470,7 +470,7 @@ static void icount_adjust(void)
     if (delta > 0
         && last_delta + ICOUNT_WOBBLE < delta * 2) {
         /* The guest is getting too far ahead.  Slow time down.  */
-        double_cpu_speed();
+        half_cpu_speed();
     }
     if (delta < 0
         && last_delta - ICOUNT_WOBBLE > delta * 2) {
