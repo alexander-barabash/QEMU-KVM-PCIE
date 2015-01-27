@@ -761,7 +761,7 @@ bool bscript_read_symmetric_u64(struct bstream *bstream, uint64_t *ull)
     return true;
 }
 
-bool bscript_write_string(struct bstream *bstream, const uint8_t *s)
+bool bscript_write_string(struct bstream *bstream, const char *s)
 {
     uint32_t size;
 
@@ -790,7 +790,7 @@ bool bscript_write_data(struct bstream *bstream, const void *data, uint32_t size
 bool bscript_read_string(struct bstream *bstream,
                          /* inout */ void **data_buffer,
                          /* inout */ uint32_t *data_buffer_size,
-                         uint8_t **string)
+                         char **string)
 {
     uint32_t string_size;
     bool is_null_marker;
@@ -823,7 +823,7 @@ bool bscript_read_string(struct bstream *bstream,
             return false;
         }
     }
-    *string = (uint8_t *)*data_buffer;
+    *string = (char *)*data_buffer;
     (*string)[string_size] = 0;
     return true;
 }

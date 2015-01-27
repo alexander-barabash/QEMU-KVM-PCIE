@@ -101,7 +101,7 @@ static inline bool bscript_read_s64(struct bstream *bstream, int64_t *number)
     return true;
 }
 
-extern bool bscript_write_string(struct bstream *bstream, const uint8_t *s);
+extern bool bscript_write_string(struct bstream *bstream, const char *s);
 extern bool bscript_write_data(struct bstream *bstream, const void *data,
                                uint32_t size);
 
@@ -120,7 +120,7 @@ extern bool bscript_write_data(struct bstream *bstream, const void *data,
 extern bool bscript_read_string(struct bstream *bstream,
                                 /* inout */ void **data_buffer,
                                 /* inout */ uint32_t *data_buffer_size,
-                                uint8_t **string);
+                                char **string);
 
 /*
  * *data_buffer should point to buffer allocated by one of the glib routines,
