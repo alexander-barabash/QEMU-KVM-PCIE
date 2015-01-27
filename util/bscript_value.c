@@ -19,7 +19,9 @@ void bscript_value_init(struct bscript_value *s,
                         uint32_t flag_width,
                         bool ascending)
 {
-    assert(flag_width <= 32);
+    assert(flag_width < 32);
+    assert(val_width > 0);
+    assert(val_width <= 64);
 
     s->bstream = bstream;
     s->val_bytes = 0;
@@ -38,7 +40,11 @@ void bscript_value_init(struct bscript_value *s,
         break;
     }
     assert(s->val_bytes);
-    s->val_mask.vu64 = (1ull << val_width) - 1;
+    if (val_width == 64) {
+        s->val_mask.vu64 = -1ll;
+    } else {
+        s->val_mask.vu64 = (1ull << val_width) - 1;
+    }
 
     s->flag_width = flag_width;
     s->flag_mask = (1 << flag_width) - 1;
