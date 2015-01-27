@@ -109,3 +109,5 @@ cscope.*
 tags
 TAGS
 *~
+/tests/qemu-iotests/common.env
+/tests/test-qapi-event.h
