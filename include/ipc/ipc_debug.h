@@ -3,12 +3,13 @@
 
 //#define EXTERNAL_PCI_DEBUG
 
+extern bool ipc_debug_enabled;
 #if defined(EXTERNAL_PCI_DEBUG) && defined(IPC_DBGKEY)
 #define IPC_DEBUG_ENUM(x, v) static bool IPC_DEBUG_##x = v
-#define IF_DBGOUT(what, code) do {              \
-        if (IPC_DEBUG_##what) {                 \
-            code;                               \
-        }                                       \
+#define IF_DBGOUT(what, code) do {                      \
+        if (IPC_DEBUG_##what && ipc_debug_enabled) {    \
+            code;                                       \
+        }                                               \
     } while (0)
 #define DBGPRINT(fmt, ...)                                          \
     do {                                                            \
@@ -18,7 +19,7 @@
 #define DBGPRINT_IMPL(...) DBGPRINT_IMPL2(__VA_ARGS__)
 #define	IPC_DBGOUT(key, what, fmt, ...)                                 \
     do {                                                                \
-        if (IPC_DEBUG_##what) {                                         \
+        if (IPC_DEBUG_##what && ipc_debug_enabled) {                    \
             fprintf(stderr, #key ": " fmt "\n", ## __VA_ARGS__);        \
         }                                                               \
     } while (0)
