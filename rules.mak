@@ -154,7 +154,7 @@ config-%.h: config-%.h-timestamp
 	@cmp $< $@ >/dev/null 2>&1 || cp -p $< $@
 
 config-%.h-timestamp: config-%.mak
-	$(call quiet-command, sh $(SRC_PATH)/scripts/create_config < $< > $@.tmp && mv -f $@.tmp $@, "  GEN   $(TARGET_DIR)config-$*.h")
+	$(call quiet-command, TMPFILE=$@.$$$$; export TMPFILE; sh $(SRC_PATH)/scripts/create_config < $< > $$TMPFILE && mv -f $$TMPFILE $@, "  GEN   $(TARGET_DIR)config-$*.h")
 
 .PHONY: clean-timestamp
 clean-timestamp:
