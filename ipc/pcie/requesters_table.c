@@ -21,7 +21,6 @@
 
 #include "config-host.h"
 #include "ipc/pcie/requesters_table.h"
-#include <linux/kvm.h>
 
 #define IPC_DBGKEY requesters_table
 #include "ipc/ipc_debug.h"
