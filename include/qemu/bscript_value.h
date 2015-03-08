@@ -1,11 +1,12 @@
 #ifndef __QEMU_BSCRIPT_VALUE_H__
 #define __QEMU_BSCRIPT_VALUE_H__
 
+#include "config-host.h"
 #include "qemu/bscript.h"
 
 union bscript_value_val {
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
         int16_t fill16;
         int8_t fill8;
@@ -13,7 +14,7 @@ union bscript_value_val {
         int8_t v;
     } vs8;
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
         int16_t fill16;
         int8_t fill8;
@@ -21,27 +22,27 @@ union bscript_value_val {
         uint8_t v;
     } vu8;
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
         int16_t fill16;
 #endif
         int16_t v;
     } vs16;
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
         int16_t fill16;
 #endif
         uint16_t v;
     } vu16;
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
 #endif
         int32_t v;
     } vs32;
     struct {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef HOST_WORDS_BIGENDIAN
         int32_t fill32;
 #endif
         uint32_t v;
