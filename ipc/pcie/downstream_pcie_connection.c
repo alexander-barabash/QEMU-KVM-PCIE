@@ -45,16 +45,18 @@ static uint64_t get_current_time_ns(DownstreamPCIeConnection *connection)
 }
 
 static void rearm_timer(DownstreamPCIeConnection *connection,
-                                 uint64_t transaction_time) {
+                        uint64_t transaction_time) {
     IPCChannel *channel = &connection->connection.channel;
-    channel->ops->rearm_timer(channel, transaction_time);
+    if ((int64_t)transaction_time != -1) {
+        channel->ops->rearm_timer(channel, transaction_time);
+    }
 }
 
 static void ipc_timer_callback(void *opaque)
 {
     DownstreamPCIeConnection *connection = opaque;
-    fprintf(stderr, "ipc_timer_callback at local time %"PRId64"\n",
-            get_current_time_ns(connection));
+    DBGOUT(REQUESTS, "ipc_timer_callback at local time %"PRId64"\n",
+           get_current_time_ns(connection));
     send_downstream_time_pcie_msg(connection, connection->pci_dev);
 }
 
@@ -338,7 +340,8 @@ void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
     uint16_t requester_id = pcie_requester_id(pci_dev);
     uint8_t tag;
     uint64_t returned_time;
-    DBGOUT(REQUESTS, "in send_downstream_time_pcie_msg for device %s", pci_dev->name);
+    DBGOUT(REQUESTS, "in send_downstream_time_pcie_msg for device %s at %"PRId64, pci_dev->name,
+           get_current_time_ns(connection));
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -404,8 +407,8 @@ static bool handle_completion(void *transaction, DownstreamPCIeConnection *conne
     PCIE_CompletionDecoded decoded;
     PCIeRequest *request;
 
-    fprintf(stderr, "handle_completion at time %"PRId64". Local time %"PRId64"\n",
-            ipc_trans_time(transaction), get_current_time_ns(connection));
+    DBGOUT(REQUESTS, "handle_completion at time %"PRId64". Local time %"PRId64"\n",
+           ipc_trans_time(transaction), get_current_time_ns(connection));
 
     decode_completion(transaction, &decoded);
     request = find_pcie_request(connection->requesters_table,
@@ -538,8 +541,8 @@ static bool handle_request(void *transaction, DownstreamPCIeConnection *connecti
 {
     PCIE_RequestDecoded decoded;
 
-    fprintf(stderr, "handle_request at time %"PRId64". Local time %"PRId64"\n",
-            ipc_trans_time(transaction), get_current_time_ns(connection));
+    DBGOUT(REQUESTS, "handle_request at time %"PRId64". Local time %"PRId64"\n",
+           ipc_trans_time(transaction), get_current_time_ns(connection));
     rearm_timer(connection, ipc_trans_time(transaction));
 
     decode_request(transaction, &decoded);
