@@ -151,10 +151,10 @@ TRACETOOL=$(PYTHON) $(SRC_PATH)/scripts/tracetool.py
 # Generate timestamp files for .h include files
 
 config-%.h: config-%.h-timestamp
-	@cmp $< $@ >/dev/null 2>&1 || cp $< $@
+	@cmp $< $@ >/dev/null 2>&1 || cp -p $< $@
 
 config-%.h-timestamp: config-%.mak
-	$(call quiet-command, sh $(SRC_PATH)/scripts/create_config < $< > $@, "  GEN   $(TARGET_DIR)config-$*.h")
+	$(call quiet-command, sh $(SRC_PATH)/scripts/create_config < $< > $@.tmp && mv -f $@.tmp $@, "  GEN   $(TARGET_DIR)config-$*.h")
 
 .PHONY: clean-timestamp
 clean-timestamp:
