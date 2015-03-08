@@ -23,7 +23,7 @@
 #include "config-host.h"
 #include "hw/pci/pci.h"
 #include "net/net.h"
-#include "qemu/osdep.h"
+#include "qemu/mapped_file.h"
 #include "qemu/range.h"
 #include "qemu/error-report.h"
 #include "ipc/pcie/downstream_pcie_connection.h"
@@ -55,6 +55,7 @@ typedef struct BARInfo {
     uint32_t flags;
     uint32_t last_written_value;
     QemuMappedFileData file_data;
+    QemuMappedSegmentData segment_data;
     MemoryRegion region;
     MemoryRegionOps ops;
     ExternalPCIState *dev;
@@ -65,7 +66,7 @@ typedef struct BARInfo {
 static inline
 uint64_t bar_size(BARInfo *bar_info)
 {
-    return bar_info->file_data.length;
+    return bar_info->segment_data.length;
 }
 
 static inline
@@ -243,7 +244,8 @@ pci_external_uninit(PCIDevice *dev)
 
     for (i = 0; i < PCI_NUM_REGIONS; ++i) {
         //memory_region_destroy(&bar_info[i].region);
-        qemu_unmap_file_data(&bar_info[i].file_data);
+        qemu_unmap_segment_data(&bar_info[i].segment_data);
+        qemu_close_mapped_file(&bar_info[i].file_data);
     }
 
     qemu_del_nic(d->nic);
@@ -519,7 +521,7 @@ external_pci_read_memory(void *opaque, hwaddr addr, unsigned size)
                                            bar_info->base_address + addr,
                                            size);
     } else {
-        return external_pci_read_direct(bar_info->file_data.pointer, addr, size);
+        return external_pci_read_direct(bar_info->segment_data.pointer, addr, size);
     }
 }
 
@@ -719,7 +721,9 @@ static int pci_external_init(PCIDevice *pci_dev)
                              pci_dev->name);
                 return -1;
             }
-            if(!qemu_map_file_data(&bar_info->file_data)) {
+            if(!qemu_open_mapped_file(&bar_info->file_data) ||
+               !qemu_map_segment_data(&bar_info->file_data,
+                                      &bar_info->segment_data)) {
                 error_report("Cannot map file \"%s\" for ROM PCI bar"
                              " for device %s\n",
                              bar_file(bar_info), pci_dev->name);
@@ -772,7 +776,9 @@ static int pci_external_init(PCIDevice *pci_dev)
 
             if (bar_prefetchable(bar_info) || bar_is_ram(bar_info)) {
                 if(bar_file(bar_info) &&
-                   !qemu_map_file_data(&bar_info->file_data)) {
+                   (!qemu_open_mapped_file(&bar_info->file_data) ||
+                    !qemu_map_segment_data(&bar_info->file_data,
+                                           &bar_info->segment_data))) {
                     error_report("Cannot map file \"%s\" for PCI bar %d"
                                  " for device %s\n",
                                  bar_file(bar_info), ii, pci_dev->name);
@@ -792,7 +798,7 @@ static int pci_external_init(PCIDevice *pci_dev)
             memory_region_init_ram_ptr(&bar_info->region,
                                        OBJECT(pci_dev),
                                        bar_info->name, io_region->size,
-                                       bar_info->file_data.pointer);
+                                       bar_info->segment_data.pointer);
         } else {
             void *opaque = bar_info;
             MemoryRegionOps *ops = &bar_info->ops;
@@ -812,7 +818,7 @@ static int pci_external_init(PCIDevice *pci_dev)
                 ops->read = external_pci_read_io;
                 ops->write = external_pci_write_io;
             } else if (bar_is_ram_or_rom(bar_info) && bar_file(bar_info)) {
-                opaque = bar_info->file_data.pointer;
+                opaque = bar_info->segment_data.pointer;
                 ops->read = external_pci_read_direct;
                 ops->write = external_pci_write_direct;
             } else if (bar_prefetchable(bar_info) && bar_file(bar_info)) {
@@ -836,6 +842,7 @@ static int pci_external_init(PCIDevice *pci_dev)
         }
     }
 
+    DBGOUT(INITIAL, "pci_external_init done\n");
     return 0;
 }
 
@@ -861,11 +868,11 @@ static void qdev_external_pci_reset(DeviceState *dev)
                         bar_info[index].flags, LITTLE_ENDIAN_FLAG_NR,   \
                         false),                                         \
         DEFINE_PROP_UINT64(_name "_size" #index, ExternalPCIState,      \
-                           bar_info[index].file_data.length, 0),        \
+                           bar_info[index].segment_data.length, 0),     \
         DEFINE_PROP_STRING(_name "_file" #index, ExternalPCIState,      \
                            bar_info[index].file_data.filename),         \
         DEFINE_PROP_UINT64(_name "_file_offset" #index, ExternalPCIState, \
-                           bar_info[index].file_data.offset, 0)
+                           bar_info[index].segment_data.offset, 0)
 
 static Property external_pci_properties[] = {
     DEFINE_NIC_PROPERTIES(ExternalPCIState, conf),
@@ -894,7 +901,6 @@ static Property external_pci_properties[] = {
     DEFINE_PROP_BIT("ipc_use_unix_socket", ExternalPCIState,
                     flags, USE_ABSTRACT_SOCKET_FLAG_NR,
                     false),
-
 
     DEFINE_PROP_END_OF_LIST(),
 };

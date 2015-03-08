@@ -257,16 +257,26 @@ void qemu_set_tty_echo(int fd, bool echo);
 
 void os_mem_prealloc(int fd, char *area, size_t sz);
 
-typedef struct QemuMappedFileData {
-    char *filename;
-    uint64_t length;
-    uint64_t offset;
-    bool readonly;
-    void *pointer;
-    int fd;
-} QemuMappedFileData;
+#ifdef _WIN32
+typedef void *QemuMappedFileHandleType;
+#else
+typedef int QemuMappedFileHandleType;
+#endif
 
-bool qemu_map_file_data(QemuMappedFileData *data);
-void qemu_unmap_file_data(QemuMappedFileData *data);
+QemuMappedFileHandleType qemu_open_mapped_file_handle(const char *filename,
+                                                      bool readable,
+                                                      bool writable);
+bool qemu_file_data_handle_valid(QemuMappedFileHandleType handle);
+void qemu_close_mapped_file_handle(QemuMappedFileHandleType handle);
+void *qemu_map_file_data(QemuMappedFileHandleType handle,
+                         bool readable,
+                         bool writable,
+                         uint64_t length,
+                         uint64_t offset);
+bool qemu_mapped_file_data_pointer_valid(void *pointer);
+void qemu_unmap_data_segment(void *pointer, uint64_t length);
+bool qemu_extend_mapped_segment(QemuMappedFileHandleType handle, void *pointer,
+                                uint64_t offset, uint64_t length,
+                                bool readable);
 
 #endif

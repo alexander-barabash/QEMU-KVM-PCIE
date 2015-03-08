@@ -494,66 +494,180 @@ writev(int fd, const struct iovec *iov, int iov_cnt)
 }
 #endif
 
+#ifndef _WIN32
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#endif
 
-bool qemu_map_file_data(QemuMappedFileData *data)
+bool qemu_mapped_file_data_pointer_valid(void *pointer)
 {
-    qemu_unmap_file_data(data);
-
-    data->pointer = NULL;
-    data->fd = 0;
-
-    if ((data->length == 0) ||
-        (data->filename == NULL) || (*data->filename == '\0')) {
+    if (pointer == NULL) {
         return false;
     }
-
-    {
-        int open_flags;
-        if (data->readonly) {
-            open_flags = O_RDONLY;
-        } else {
-            open_flags = O_RDWR;
-        }
-
-        data->fd = open(data->filename, open_flags);
-        if ((data->fd == -1) || (data->fd == 0)) {
-            return false;
-        }
-    }
-
-    {
-        int flags = MAP_SHARED;
-        int prot;
-
-        if (data->readonly) {
-            prot = PROT_READ;
-        } else {
-            prot = PROT_READ | PROT_WRITE;
-        }
-
-        data->pointer = mmap64(NULL, data->length, prot, flags, data->fd, data->offset);
-        if ((data->pointer == MAP_FAILED) || (data->pointer == NULL)) {
-            qemu_unmap_file_data(data);
-            return false;
-        }
-    }
+#ifndef _WIN32
+    return pointer != MAP_FAILED;
+#else
     return true;
+#endif
 }
 
-void qemu_unmap_file_data(QemuMappedFileData *data)
+bool qemu_file_data_handle_valid(QemuMappedFileHandleType handle)
 {
-    if ((data->pointer != NULL) && (data->pointer != MAP_FAILED)) {
-        munmap(data->pointer, data->length);
+    if (!handle) {
+        return false;
     }
-    if ((data->fd != 0) && (data->fd != -1)) {
-        close(data->fd);
+#ifndef _WIN32
+    return handle != -1;
+#else
+    return handle != INVALID_HANDLE_VALUE;
+#endif
+}
+
+QemuMappedFileHandleType qemu_open_mapped_file_handle(const char *filename,
+                                                      bool readable,
+                                                      bool writable)
+{
+#ifndef _WIN32
+    int open_flags = O_CLOEXEC | O_LARGEFILE;
+
+    if (writable) {
+        open_flags |= O_RDWR; // O_WRONLY ???
+        open_flags |= O_CREAT; // O_EXCL ???
+    } else if (readable) {
+        open_flags |= O_RDONLY;
+    } else {
+        return -1;
     }
-    data->pointer = NULL;
-    data->fd = 0;
+    return open(filename, open_flags, 0666);
+#else
+    DWORD dwDesiredAccess;
+    DWORD dwShareMode;
+    DWORD dwCreationDisposition;
+    if (writable) {
+        dwDesiredAccess = GENERIC_WRITE | GENERIC_READ;
+        dwCreationDisposition = OPEN_ALWAYS;
+        dwShareMode = FILE_SHARE_READ;
+    } else if (readable) {
+        dwDesiredAccess = GENERIC_READ;
+        dwCreationDisposition = OPEN_EXISTING;
+        dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    } else {
+        return INVALID_HANDLE_VALUE;
+    }
+    return CreateFile(filename,
+                      dwDesiredAccess,
+                      dwShareMode,
+                      NULL,
+                      dwCreationDisposition,
+                      FILE_ATTRIBUTE_NORMAL,
+                      0);
+#endif
+}
+
+void *qemu_map_file_data(QemuMappedFileHandleType handle,
+                         bool readable,
+                         bool writable,
+                         uint64_t length,
+                         uint64_t offset)
+{
+    if (!qemu_file_data_handle_valid(handle)) {
+        return NULL;
+    }
+    if (length == 0) {
+        return NULL;
+    }
+#ifndef _WIN32
+    int flags = MAP_SHARED;
+    int prot;
+    
+    if (writable) {
+        prot = PROT_READ | PROT_WRITE;
+    } else if (readable) {
+        prot = PROT_READ;
+    } else {
+        return NULL;
+    }
+    
+    return mmap(NULL, length, prot, flags, handle, offset);
+#else
+  LARGE_INTEGER li;
+  HANDLE mmap;
+  void *ptr;
+  DWORD flProtect;
+  DWORD dwDesiredAccess;
+
+  if (writable) {
+      flProtect = PAGE_READWRITE;
+      dwDesiredAccess = FILE_MAP_WRITE | FILE_MAP_READ;
+  } else if (readable) {
+      flProtect = PAGE_READONLY;
+      dwDesiredAccess = FILE_MAP_READ;
+  } else {
+      return NULL;
+  }
+
+  li.QuadPart = (offset + length);
+  mmap =
+      CreateFileMapping(handle, NULL, flProtect, li.HighPart, li.LowPart, NULL);
+  if(mmap == INVALID_HANDLE_VALUE) {
+      return NULL;
+  }
+  
+  li.QuadPart = offset;
+  ptr = MapViewOfFile(mmap, dwDesiredAccess, li.HighPart, li.LowPart, length);
+  CloseHandle(mmap);
+  return ptr;
+#endif
+}
+
+void qemu_unmap_data_segment(void *pointer, uint64_t length)
+{
+    if (qemu_mapped_file_data_pointer_valid(pointer)) {
+#ifndef _WIN32
+        munmap(pointer, length);
+#else
+        UnmapViewOfFile(pointer);
+#endif
+    }
+}
+
+void qemu_close_mapped_file_handle(QemuMappedFileHandleType handle)
+{
+    if (qemu_file_data_handle_valid(handle)) {
+#ifndef _WIN32
+        close(handle);
+#else
+        CloseHandle(handle);
+#endif
+    }
+}
+
+bool qemu_extend_mapped_segment(QemuMappedFileHandleType handle, void *pointer,
+                                uint64_t offset, uint64_t length, bool readable)
+{
+#ifndef _WIN32
+    char buf[1];
+    bool need_pwrite = true;
+    if (readable) {
+        if (pread(handle,
+                  buf, 1, offset + length - 1) == 1) {
+            need_pwrite = false;
+        }
+    }
+    if (need_pwrite) {
+        buf[0] = '\0';
+        if (pwrite(handle,
+                   buf, 1, offset + length - 1) != 1) {
+            return false;
+        }
+    }
+    if (!readable) {
+        memset(pointer, 0, length);
+    }
+#endif
+    return true;
 }
 
 void *__wrap_memcpy(void *dest, const void *src, size_t n);

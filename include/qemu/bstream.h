@@ -1,12 +1,14 @@
 #ifndef __QEMU_BSTREAM_H__
 #define __QEMU_BSTREAM_H__
 
+#include "qemu/mapped_file.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
 
 struct bstream {
-    int fd;
+    QemuMappedFileData file_data;
+    QemuMappedSegmentData segment_data;
     char *addr;
     char *end;
     char *p;
