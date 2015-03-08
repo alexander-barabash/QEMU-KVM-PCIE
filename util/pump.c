@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
+#ifndef _WIN32
 #include "qemu-common.h"
 #include "qemu/pump.h"
 #include <sys/mman.h>
@@ -249,3 +249,4 @@ ssize_t qemu_mapped_read(void *ptr, size_t size, struct qemu_mapped_file *file)
     }
     return copied;
 }
+#endif

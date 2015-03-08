@@ -25,6 +25,7 @@
 #ifndef __QEMU_PUMP_H__
 #define __QEMU_PUMP_H__
 
+#ifndef _WIN32
 struct qemu_mapped_file {
     int fd;
     uint64_t pointer_position;
@@ -78,4 +79,5 @@ void init_pump(struct qemu_pump *pump,
                bool do_mmap_out);
 int pump_data(struct qemu_pump *pump);
 
+#endif /* _WIN32 */
 #endif /* __QEMU_PUMP_H__ */
