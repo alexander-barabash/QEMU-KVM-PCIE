@@ -1,1 +1,0 @@
-../origin-kernel/linux/compiler-intel.h
