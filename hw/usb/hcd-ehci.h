@@ -31,7 +31,7 @@
 #endif
 
 #if EHCI_DEBUG
-#define DPRINTF printf
+#define DPRINTF(...) fprintf(stderr, "EHCI: " __VA_ARGS__)
 #else
 #define DPRINTF(...)
 #endif

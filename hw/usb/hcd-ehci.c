@@ -688,6 +688,8 @@ static void ehci_attach(USBPort *port)
     uint32_t *portsc = &s->portsc[port->index];
     const char *owner = (*portsc & PORTSC_POWNER) ? "comp" : "ehci";
 
+    DPRINTF("ehci_attach\n");
+
     trace_usb_ehci_port_attach(port->index, owner, port->dev->product_desc);
 
     if (*portsc & PORTSC_POWNER) {
@@ -708,6 +710,8 @@ static void ehci_detach(USBPort *port)
     EHCIState *s = port->opaque;
     uint32_t *portsc = &s->portsc[port->index];
     const char *owner = (*portsc & PORTSC_POWNER) ? "comp" : "ehci";
+
+    DPRINTF("ehci_detach\n");
 
     trace_usb_ehci_port_detach(port->index, owner);
 
@@ -737,6 +741,8 @@ static void ehci_child_detach(USBPort *port, USBDevice *child)
     EHCIState *s = port->opaque;
     uint32_t portsc = s->portsc[port->index];
 
+    DPRINTF("ehci_child_detach\n");
+
     if (portsc & PORTSC_POWNER) {
         USBPort *companion = s->companion_ports[port->index];
         companion->ops->child_detach(companion, child);
@@ -752,6 +758,8 @@ static void ehci_wakeup(USBPort *port)
     EHCIState *s = port->opaque;
     uint32_t *portsc = &s->portsc[port->index];
 
+    DPRINTF("ehci_wakeup\n");
+
     if (*portsc & PORTSC_POWNER) {
         USBPort *companion = s->companion_ports[port->index];
         if (companion->ops->wakeup) {
@@ -766,6 +774,8 @@ static void ehci_wakeup(USBPort *port)
         ehci_raise_irq(s, USBSTS_PCD);
     }
 
+    DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+            qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
     qemu_bh_schedule(s->async_bh);
 }
 
@@ -774,6 +784,8 @@ static int ehci_register_companion(USBBus *bus, USBPort *ports[],
 {
     EHCIState *s = container_of(bus, EHCIState, bus);
     uint32_t i;
+
+    DPRINTF("ehci_register_companion\n");
 
     if (firstport + portcount > NB_PORTS) {
         qerror_report(QERR_INVALID_PARAMETER_VALUE, "firstport",
@@ -816,11 +828,15 @@ static void ehci_wakeup_endpoint(USBBus *bus, USBEndpoint *ep,
     EHCIState *s = container_of(bus, EHCIState, bus);
     uint32_t portsc = s->portsc[ep->dev->port->index];
 
+    DPRINTF("ehci_wakeup_endpoint\n");
+
     if (portsc & PORTSC_POWNER) {
         return;
     }
 
     s->periodic_sched_active = PERIODIC_ACTIVE;
+    DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+            qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
     qemu_bh_schedule(s->async_bh);
 }
 
@@ -1041,6 +1057,8 @@ static void ehci_opreg_write(void *ptr, hwaddr addr,
              * trigger and re-use a qh without us seeing the unlink.
              */
             s->async_stepdown = 0;
+            DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+                    qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
             qemu_bh_schedule(s->async_bh);
             trace_usb_ehci_doorbell_ring();
         }
@@ -1053,6 +1071,8 @@ static void ehci_opreg_write(void *ptr, hwaddr addr,
             s->usbcmd = val; /* Set usbcmd for ehci_update_halt() */
             ehci_update_halt(s);
             s->async_stepdown = 0;
+            DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+                    qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
             qemu_bh_schedule(s->async_bh);
         }
         break;
@@ -1067,6 +1087,8 @@ static void ehci_opreg_write(void *ptr, hwaddr addr,
     case USBINTR:
         val &= USBINTR_MASK;
         if (ehci_enabled(s) && (USBSTS_FLR & val)) {
+            DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+                    qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
             qemu_bh_schedule(s->async_bh);
         }
         break;
@@ -1231,6 +1253,8 @@ static void ehci_async_complete_packet(USBPort *port, USBPacket *packet)
     EHCIState *s = port->opaque;
     uint32_t portsc = s->portsc[port->index];
 
+    DPRINTF("ehci_async_complete_packet\n");
+
     if (portsc & PORTSC_POWNER) {
         USBPort *companion = s->companion_ports[port->index];
         companion->ops->complete(companion, packet);
@@ -1252,6 +1276,8 @@ static void ehci_async_complete_packet(USBPort *port, USBPacket *packet)
     if (!p->queue->async) {
         s->periodic_sched_active = PERIODIC_ACTIVE;
     }
+    DPRINTF("Setting up ehci_frame_timer as bh at %"PRId64"\n",
+            qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
     qemu_bh_schedule(s->async_bh);
 }
 
@@ -2236,6 +2262,8 @@ static void ehci_frame_timer(void *opaque)
     ns_elapsed = t_now - ehci->last_run_ns;
     uframes = ns_elapsed / UFRAME_TIMER_NS;
 
+    DPRINTF("ehci_frame_timer at %"PRId64"\n", t_now);
+
     if (ehci_periodic_enabled(ehci) || ehci->pstate != EST_INACTIVE) {
         need_timer++;
 
@@ -2310,6 +2338,7 @@ static void ehci_frame_timer(void *opaque)
             expire_time = t_now + (get_ticks_per_sec()
                                * (ehci->async_stepdown+1) / FRAME_TIMER_FREQ);
         }
+        DPRINTF("Setting up ehci_frame_timer to %"PRId64"\n", expire_time);
         timer_mod(ehci->frame_timer, expire_time);
     }
 }
