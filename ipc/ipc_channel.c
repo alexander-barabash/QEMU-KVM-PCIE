@@ -19,31 +19,81 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "qemu-common.h"
 #include "config-host.h"
 #include "ipc/ipc_channel.h"
 #include <stdio.h>
 #include <stddef.h>
 #include <unistd.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netdb.h>
+#else
+#include <winsock2.h>
+#endif
 #include <errno.h>
 
 #define IPC_DBGKEY ipc_channel
 #include "ipc/ipc_debug.h"
 IPC_DEBUG_ON(CHANNEL_DATA);
 
-bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
-                       const char *socket_path, bool use_abstract_path)
+static bool connect_ipc_channel_tcp(IPCChannel *channel,
+                                    const char *host,
+                                    uint16_t port)
+{
+    struct hostent *server;
+    struct sockaddr_in serv_addr;
+
+    server = gethostbyname(host);
+    if (!server) {
+        fprintf(stderr, "Host \"%s\" not found.\n", host);
+        return false;
+    }
+
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr,
+           server->h_addr, 
+           server->h_length);
+
+#ifdef SOCK_CLOEXEC
+    channel->fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    channel->fd = socket(AF_INET, SOCK_STREAM, 0);
+#endif
+    if (channel->fd != -1) {
+#ifndef SOCK_CLOEXEC
+#ifndef _WIN32
+        qemu_set_cloexec(channel->fd);
+#endif
+#endif
+        while (connect(channel->fd,
+                       (struct sockaddr *)(&serv_addr),
+                       sizeof(serv_addr)) != 0) {
+            if (errno != EINTR) {
+                fprintf(stderr, "Failed to connect IPC socket %s:%d (error: %s).\n",
+                        host, port, strerror(errno));
+                return false;
+            }
+        }
+    } else {
+        fprintf(stderr, "Failed to create IPC socket..\n");
+        return false;
+    }
+    return true;
+}
+
+#ifndef _WIN32
+static bool connect_ipc_channel_unix(IPCChannel *channel,
+                                     const char *socket_path,
+                                     bool use_abstract_path)
 {
     struct sockaddr_un addr;
     socklen_t addr_size;
     char *addr_path = addr.sun_path;
 
-    if (!socket_path || strlen(socket_path) == 0) {
-        fprintf(stderr, "Invalid null socket path.\n");
-        return false;
-    }
     if (strlen(socket_path) > sizeof(addr.sun_path) - 2) {
         fprintf(stderr, "Invalid socket path \"%s\".\n", socket_path);
         return false;
@@ -83,8 +133,49 @@ bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
         fprintf(stderr, "Failed to create IPC socket..\n");
         return false;
     }
-    channel->ops = ops;
     return true;
+}
+#endif
+
+bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
+                       const char *socket_path, bool use_abstract_path)
+{
+    bool connected = false;
+    const char *last_colon;
+    const char *port_string;
+    if (!socket_path || strlen(socket_path) == 0) {
+        fprintf(stderr, "Invalid null socket path.\n");
+        return false;
+    }
+    last_colon = strrchr(socket_path, ':');
+    port_string = last_colon + 1;
+    if (last_colon && *port_string) {
+        size_t host_len = last_colon - socket_path;
+        char *host = g_malloc0(host_len + 1);
+        unsigned long port;
+        char *endptr = NULL;
+        if (host_len) {
+            memcpy(host, socket_path, host_len);
+        }
+        port = strtoul(port_string, &endptr, 0);
+        if ((endptr && *endptr) || (port > 0xFFFF)) {
+            g_free(host);
+            fprintf(stderr, "Invalid socket path \"%s\".\n", socket_path);
+            return false;
+        }
+        connected = connect_ipc_channel_tcp(channel, host, (uint16_t)port);
+        g_free(host);        
+    } else {
+#ifndef _WIN32
+        connected = connect_ipc_channel_unix(channel, socket_path, use_abstract_path);
+#endif
+    }
+    if (connected) {
+        channel->ops = ops;
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool read_ipc_channel_data(IPCChannel *channel,

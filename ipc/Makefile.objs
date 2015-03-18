@@ -1,4 +1,4 @@
-common-obj-y += ipc_channel.o ipc_connection.o
+common-obj-y += ipc_channel.o ipc_connection.o ipc_debug.o
 common-obj-y += pcie/
 
 
