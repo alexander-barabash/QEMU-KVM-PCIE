@@ -38,7 +38,7 @@
 #include "migration/migration.h"
 #include "qapi/qmp/qerror.h"
 
-#define DEBUG_KVM
+//#define DEBUG_KVM
 
 #ifdef DEBUG_KVM
 #define DPRINTF(fmt, ...) \
@@ -78,7 +78,9 @@ static bool has_msr_kvm_steal_time;
 static int lm_capable_kernel;
 static bool has_msr_hv_hypercall;
 static bool has_msr_hv_vapic;
+#ifdef KVM_CAP_HYPERV_TIME
 static bool has_msr_hv_tsc;
+#endif
 static bool has_msr_mtrr;
 
 static bool has_msr_architectural_pmu;
@@ -142,9 +144,11 @@ static int get_para_features(KVMState *s)
     int i, features = 0;
 
     for (i = 0; i < ARRAY_SIZE(para_features); i++) {
+#if 0
         if (kvm_check_extension(s, para_features[i].cap)) {
             features |= (1 << para_features[i].feature);
         }
+#endif
     }
 
     return features;
@@ -507,6 +511,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
             c->eax |= HV_X64_MSR_APIC_ACCESS_AVAILABLE;
             has_msr_hv_vapic = true;
         }
+#ifdef KVM_CAP_HYPERV_TIME
         if (cpu->hyperv_time &&
             kvm_check_extension(cs->kvm_state, KVM_CAP_HYPERV_TIME) > 0) {
             c->eax |= HV_X64_MSR_HYPERCALL_AVAILABLE;
@@ -514,6 +519,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
             c->eax |= 0x200;
             has_msr_hv_tsc = true;
         }
+#endif
         c = &cpuid_data.entries[cpuid_i++];
         c->function = HYPERV_CPUID_ENLIGHTMENT_INFO;
         if (cpu->hyperv_relaxed_timing) {
@@ -1279,10 +1285,12 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_APIC_ASSIST_PAGE,
                               env->msr_hv_vapic);
         }
+#ifdef KVM_CAP_HYPERV_TIME
         if (has_msr_hv_tsc) {
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_REFERENCE_TSC,
                               env->msr_hv_tsc);
         }
+#endif
         if (has_msr_mtrr) {
             kvm_msr_entry_set(&msrs[n++], MSR_MTRRdefType, env->mtrr_deftype);
             kvm_msr_entry_set(&msrs[n++],
@@ -1605,9 +1613,11 @@ static int kvm_get_msrs(X86CPU *cpu)
     if (has_msr_hv_vapic) {
         msrs[n++].index = HV_X64_MSR_APIC_ASSIST_PAGE;
     }
+#ifdef KVM_CAP_HYPERV_TIME
     if (has_msr_hv_tsc) {
         msrs[n++].index = HV_X64_MSR_REFERENCE_TSC;
     }
+#endif
     if (has_msr_mtrr) {
         msrs[n++].index = MSR_MTRRdefType;
         msrs[n++].index = MSR_MTRRfix64K_00000;
@@ -1743,9 +1753,11 @@ static int kvm_get_msrs(X86CPU *cpu)
         case HV_X64_MSR_APIC_ASSIST_PAGE:
             env->msr_hv_vapic = msrs[i].data;
             break;
+#ifdef KVM_CAP_HYPERV_TIME
         case HV_X64_MSR_REFERENCE_TSC:
             env->msr_hv_tsc = msrs[i].data;
             break;
+#endif
         case MSR_MTRRdefType:
             env->mtrr_deftype = msrs[i].data;
             break;
@@ -2117,39 +2129,6 @@ void kvm_arch_pre_run(CPUState *cpu, struct kvm_run *run)
     X86CPU *x86_cpu = X86_CPU(cpu);
     CPUX86State *env = &x86_cpu->env;
     int ret;
-    static  __thread bool was;
-    static __thread bool print_preemption_report;
-    if(!was) {
-        char *RKVM_REPORT = getenv("RKVM_REPORT");
-        if (RKVM_REPORT && *RKVM_REPORT && (*RKVM_REPORT != '0')) {
-            print_preemption_report = true;
-        }
-        was = true;
-        //system("xterm");
-    }
-
-    if (print_preemption_report) {
-        __u64 new_secs;
-        __u64 steal_milli_secs;
-        __u64 last_read_tsc_milli_secs;
-        struct rkvm_vcpu_debug_data *debug = &run->rkvm_vcpu_debug_data;
-        new_secs = (debug->steal + debug->accumulate_ucc) / (2000 * 1000 * 1000);
-        steal_milli_secs = debug->steal / (2 * ((1000 * 1000) >> 5));
-        last_read_tsc_milli_secs = debug->last_read_tsc / (2 * (1000 * 1000));
-        if(new_secs > debug->reported_secs) {
-            __u64 diff_secs = new_secs - debug->reported_secs;
-            debug->reported_secs = new_secs;
-            DPRINTF("CPU %d run for %lld secs (diff %lld). "
-                    "Preemption diff %lld. Last read TSC %lld ms. "
-                    "AUX %d calls. Steal: %lld ms.\n",
-                    cpu_index(cpu),
-                    new_secs, diff_secs,
-                    (long long)(debug->front - debug->back),
-                    last_read_tsc_milli_secs,
-                    debug->tscp_counter,
-                    steal_milli_secs);
-        }
-    }
 
     /* Inject NMI */
     if (cpu->interrupt_request & CPU_INTERRUPT_NMI) {
@@ -2544,9 +2523,6 @@ int kvm_arch_handle_exit(CPUState *cs, struct kvm_run *run)
     case KVM_EXIT_DEBUG:
         DPRINTF("kvm_exit_debug\n");
         ret = kvm_handle_debug(cpu, &run->debug.arch);
-        break;
-    case KVM_EXIT_RKVM:
-        ret = 0;
         break;
     default:
         fprintf(stderr, "KVM: unknown exit reason %d\n", run->exit_reason);
