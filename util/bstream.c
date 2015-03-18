@@ -34,7 +34,12 @@ static void bstream_commit_buffer(struct bstream *bstream)
 static bool bstream_next_output_buffer(struct bstream *bstream)
 {
     bstream_commit_buffer(bstream);
-    return bstream_init_segment(bstream);
+    if (bstream_init_segment(bstream)) {
+        memset(bstream->addr, 0, bstream->segment_data.length);
+        return true;
+    } else {
+        return false;
+    }
 }
 
 static bool bstream_next_input_buffer(struct bstream *bstream)
