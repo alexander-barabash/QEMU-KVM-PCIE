@@ -24,7 +24,7 @@
 #include "qemu/main-loop.h"
 #include "block/aio.h"
 #include "sysemu/sysemu.h"
-#include <glib.h>
+#include "glib-compat.h"
 #include <string.h>
 
 #define IPC_DBGKEY ipc_connection
