@@ -38,7 +38,7 @@ static void ipc_timer_callback(void *opaque);
 
 static uint64_t quantum = 1000 * 1000; /* 1 milli second */
 
-static uint64_t get_current_time_ns(DownstreamPCIeConnection *connection)
+static inline uint64_t get_current_time_ns(DownstreamPCIeConnection *connection)
 {
     IPCChannel *channel = &connection->connection.channel;
     return channel->ops->get_current_time_ns(channel);
@@ -364,6 +364,7 @@ void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
     returned_time = ipc_trans_time(request->transaction);
     pcie_request_done(request);
     DBGOUT(REQUESTS, "send_downstream_time_pcie_msg: returned_time %"PRId64"", returned_time);
+    fprintf(stderr, "send_downstream_time_pcie_msg: returned_time %"PRId64"", returned_time);
 }
 
 void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
