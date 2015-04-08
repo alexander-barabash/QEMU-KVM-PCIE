@@ -206,6 +206,7 @@ struct MemoryListener {
 struct AddressSpace {
     /* All fields are private. */
     char *name;
+    int as_record_id;
     MemoryRegion *root;
     struct FlatView *current_map;
     int ioeventfd_nb;
@@ -551,11 +552,6 @@ int memory_region_get_fd(MemoryRegion *mr);
  * @mr: the memory region being queried.
  */
 void *memory_region_get_ram_ptr(MemoryRegion *mr);
-
-void memory_region_xfer_to_ram(MemoryRegion *mr, hwaddr addr,
-                               const uint8_t *buf, int len);
-void memory_region_xfer_from_ram(MemoryRegion *mr, uint8_t *buf,
-                                 hwaddr addr, int len);
 
 /**
  * memory_region_set_log: Turn dirty logging on or off for a region.
@@ -1062,6 +1058,8 @@ MemoryRegion *address_space_translate(AddressSpace *as, hwaddr addr,
  * @is_write: indicates the transfer direction
  */
 bool address_space_access_valid(AddressSpace *as, hwaddr addr, int len, bool is_write);
+
+int num_outstanding_ram_buffers(void);
 
 /* address_space_map: map a physical memory region into a host virtual address
  *

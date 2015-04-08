@@ -52,6 +52,7 @@
 #include "exec/ram_addr.h"
 
 #include "qemu/range.h"
+#include "rr.h"
 
 //#define DEBUG_SUBPAGE
 
@@ -1463,8 +1464,6 @@ void *qemu_get_ram_block_host_ptr(ram_addr_t addr)
     return block->host;
 }
 
-extern bool do_rkvm_debug;
-extern int qemu_get_ram_ptr_ok;
 /* Return a host pointer to ram allocated with qemu_ram_alloc.
    With the exception of the softmmu code in this file, this should
    only be used for local memory (e.g. video ram) that the device owns,
@@ -1476,13 +1475,6 @@ extern int qemu_get_ram_ptr_ok;
 void *qemu_get_ram_ptr(ram_addr_t addr)
 {
     RAMBlock *block = qemu_get_ram_block(addr);
-
-    if (!qemu_get_ram_ptr_ok) {
-        if (do_rkvm_debug) {
-            fprintf(stderr, "qemu_get_ram_ptr 0x%llx\n",
-                    (long long)addr);
-        }
-    }
 
     if (xen_enabled()) {
         /* We need to check if the requested address is in the RAM
@@ -2020,42 +2012,15 @@ static int memory_access_size(MemoryRegion *mr, unsigned l, hwaddr addr)
     return l;
 }
 
-int (*pkvm_xfer)(void *xfer_data, void *dest, const void *src, int len);
-void *kvm_xfer_data;
-
-void memory_region_xfer_to_ram(MemoryRegion *mr, hwaddr addr,
-                               const uint8_t *buf, int len)
+bool address_space_rw(AddressSpace *as, hwaddr _addr, uint8_t *_buf,
+                      int _len, bool is_write)
 {
-    uint8_t *ptr;
-    addr += memory_region_get_ram_addr(mr);
-    qemu_get_ram_ptr_ok = 1;
-    ptr = qemu_get_ram_ptr(addr);
-    qemu_get_ram_ptr_ok = 0;
-    if ((pkvm_xfer == NULL) ||
-        (pkvm_xfer(kvm_xfer_data, ptr, buf, len) != 0)) {
-        memcpy(ptr, buf, len);
-    }
-    invalidate_and_set_dirty(addr, len);
-}
-
-void memory_region_xfer_from_ram(MemoryRegion *mr, uint8_t *buf,
-                                        hwaddr addr, int len)
-{
-    uint8_t *ptr;
-    addr += memory_region_get_ram_addr(mr);
-    qemu_get_ram_ptr_ok = 1;
-    ptr = qemu_get_ram_ptr(addr);
-    qemu_get_ram_ptr_ok = 0;
-    if ((pkvm_xfer == NULL) ||
-        (pkvm_xfer(kvm_xfer_data, buf, ptr, len) != 0)) {
-        memcpy(buf, ptr, len);
-    }
-}
-
-bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
-                      int len, bool is_write)
-{
+    hwaddr addr = _addr;
+    uint8_t *buf = _buf;
+    int len = _len;
+    int shift = 0;
     hwaddr l;
+    uint8_t *ptr;
     uint64_t val;
     hwaddr addr1;
     MemoryRegion *mr;
@@ -2067,6 +2032,10 @@ bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
 
         if (is_write) {
             if (!memory_access_is_direct(mr, is_write)) {
+                if (rr_replaying) {
+                    RR_DEBUG_ERROR("ERROR: Replaying as indirect write");
+                    return true;
+                }
                 l = memory_access_size(mr, l, addr1);
                 /* XXX: could force current_cpu to NULL to avoid
                    potential bugs */
@@ -2095,10 +2064,25 @@ bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
                     abort();
                 }
             } else {
-                /* RAM case */
-                memory_region_xfer_to_ram(mr, addr1, buf, l);
+                if (!rr_prepare_address_space_write(as, addr, buf, l)) {
+                    addr1 += memory_region_get_ram_addr(mr);
+                    /* RAM case */
+                    ptr = qemu_get_ram_ptr(addr1);
+                    if (rr_replaying) {
+                        if (memcmp(ptr, buf, l)) {
+                            RR_DEBUG_WARNING("Address space contents differs.");
+                        }
+                    }
+                    memcpy(ptr, buf, l);
+                    invalidate_and_set_dirty(addr1, l);
+                    rr_address_space_write(as, addr, buf, l);
+                }
             }
         } else {
+            if (rr_replaying) {
+                RR_DEBUG_ERROR("ERROR: Replaying as read");
+                return true;
+            }
             if (!memory_access_is_direct(mr, is_write)) {
                 /* I/O case */
                 l = memory_access_size(mr, l, addr1);
@@ -2128,12 +2112,15 @@ bool address_space_rw(AddressSpace *as, hwaddr addr, uint8_t *buf,
                 }
             } else {
                 /* RAM case */
-                memory_region_xfer_from_ram(mr, buf, addr1, l);
+                addr1 += memory_region_get_ram_addr(mr);
+                ptr = qemu_get_ram_ptr(addr1);
+                memcpy(buf, ptr, l);
             }
         }
         len -= l;
         buf += l;
         addr += l;
+        shift += l;
     }
 
     return error;
@@ -2181,7 +2168,10 @@ static inline void cpu_physical_memory_write_rom_internal(AddressSpace *as,
             /* ROM/RAM case */
             switch (type) {
             case WRITE_DATA:
-                memory_region_xfer_to_ram(mr, addr1, buf, l);
+                addr1 += memory_region_get_ram_addr(mr);
+                ptr = qemu_get_ram_ptr(addr1);
+                memcpy(ptr, buf, l);
+                invalidate_and_set_dirty(addr1, l);
                 break;
             case FLUSH_CACHE:
                 ptr = qemu_get_ram_ptr(addr1);
@@ -2223,9 +2213,98 @@ typedef struct {
     void *buffer;
     hwaddr addr;
     hwaddr len;
+    bool is_write;
 } BounceBuffer;
 
 static BounceBuffer bounce;
+
+typedef struct {
+    MemoryRegion *mr;
+    void *buffer;
+    hwaddr addr;
+    hwaddr len;
+    bool is_write;
+    int use_count;
+    bool dummy_buffer;
+} RAMBuffer;
+
+static GHashTable *get_ram_buffer_table(void)
+{
+    static GHashTable *the_table;
+    if (the_table == NULL) {
+        the_table = g_hash_table_new(g_direct_hash, g_direct_equal);
+    }
+    return the_table;
+}
+
+static int outstanding_ram_buffers;
+
+int num_outstanding_ram_buffers(void)
+{
+    return outstanding_ram_buffers;
+}
+
+static RAMBuffer *get_ram_buffer(AddressSpace *as,
+                                 MemoryRegion *mr,
+                                 void *mapped,
+                                 hwaddr addr,
+                                 hwaddr l,
+                                 bool is_write)
+{
+    RAMBuffer *ram_buffer = NULL;
+    void *buffer = mapped;
+    bool dummy_buffer = rr_replay;
+    outstanding_ram_buffers++;
+
+    if (dummy_buffer) {
+        buffer = g_malloc(l);
+        memcpy(buffer, mapped, l);
+    }
+
+    ram_buffer = (RAMBuffer *)g_hash_table_lookup(get_ram_buffer_table(), buffer);
+    if (!ram_buffer) {
+        ram_buffer = g_malloc0(sizeof(*ram_buffer));
+        g_hash_table_insert(get_ram_buffer_table(), buffer, ram_buffer);
+    }
+    ram_buffer->dummy_buffer = dummy_buffer;
+    ram_buffer->use_count++;
+    ram_buffer->buffer = buffer;
+    ram_buffer->addr = addr;
+    ram_buffer->len = l;
+    ram_buffer->is_write = is_write;
+    memory_region_ref(mr);
+    ram_buffer->mr = mr;
+    return buffer;
+}
+
+static void release_ram_buffer(AddressSpace *as,
+                               void *buffer,
+                               bool is_write,
+                               hwaddr access_len)
+{
+    RAMBuffer *ram_buffer = g_hash_table_lookup(get_ram_buffer_table(), buffer);
+    if (!ram_buffer) {
+        return;
+    }
+    outstanding_ram_buffers--;
+    if (ram_buffer->dummy_buffer) {
+        g_free(buffer);
+    } else {
+        if (is_write && (access_len > 0)) {
+            rr_address_space_write(as, ram_buffer->addr, buffer, access_len);
+            invalidate_and_set_dirty(ram_buffer->addr, access_len);
+        }
+    }
+    if (xen_enabled()) {
+        xen_invalidate_map_cache_entry(buffer);
+    }
+    if (!--ram_buffer->use_count) {
+        g_hash_table_remove(get_ram_buffer_table(), buffer);
+        ram_buffer->buffer = NULL;
+        memory_region_unref(ram_buffer->mr);
+        g_free(ram_buffer);
+    }
+}
 
 typedef struct MapClient {
     void *opaque;
@@ -2303,6 +2382,9 @@ void *address_space_map(AddressSpace *as,
     hwaddr l, xlat, base;
     MemoryRegion *mr, *this_mr;
     ram_addr_t raddr;
+    void *mapped;
+    void *result;
+    hwaddr _addr = addr;
 
     if (len == 0) {
         return NULL;
@@ -2350,7 +2432,9 @@ void *address_space_map(AddressSpace *as,
 
     memory_region_ref(mr);
     *plen = done;
-    return qemu_ram_ptr_length(raddr + base, plen);
+    mapped = qemu_ram_ptr_length(raddr + base, plen);
+    result = get_ram_buffer(as, mr, mapped, _addr, *plen, is_write);
+    return result;
 }
 
 /* Unmaps a memory region previously mapped by address_space_map().
@@ -2361,18 +2445,7 @@ void address_space_unmap(AddressSpace *as, void *buffer, hwaddr len,
                          int is_write, hwaddr access_len)
 {
     if (buffer != bounce.buffer) {
-        MemoryRegion *mr;
-        ram_addr_t addr1;
-
-        mr = qemu_ram_addr_from_host(buffer, &addr1);
-        assert(mr != NULL);
-        if (is_write) {
-            invalidate_and_set_dirty(addr1, access_len);
-        }
-        if (xen_enabled()) {
-            xen_invalidate_map_cache_entry(buffer);
-        }
-        memory_region_unref(mr);
+        release_ram_buffer(as, buffer, is_write, access_len);
         return;
     }
     if (is_write) {

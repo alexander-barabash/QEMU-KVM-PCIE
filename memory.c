@@ -19,6 +19,7 @@
 #include "qapi/visitor.h"
 #include "qemu/bitops.h"
 #include "qom/object.h"
+#include "rr.h"
 #include "trace.h"
 #include <assert.h>
 
@@ -391,7 +392,7 @@ static void memory_region_oldmmio_read_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = mr->ops->old_mmio.read[ctz32(size)](mr->opaque, addr);
-    trace_memory_region_ops_read(mr, addr, tmp, size);
+    trace_memory_region_ops_read(mr->name, addr, tmp, size);
     *value |= (tmp & mask) << shift;
 }
 
@@ -408,7 +409,7 @@ static void memory_region_read_accessor(MemoryRegion *mr,
         qemu_flush_coalesced_mmio_buffer();
     }
     tmp = mr->ops->read(mr->opaque, addr, size);
-    trace_memory_region_ops_read(mr, addr, tmp, size);
+    trace_memory_region_ops_read(mr->name, addr, tmp, size);
     *value |= (tmp & mask) << shift;
 }
 
@@ -422,7 +423,7 @@ static void memory_region_oldmmio_write_accessor(MemoryRegion *mr,
     uint64_t tmp;
 
     tmp = (*value >> shift) & mask;
-    trace_memory_region_ops_write(mr, addr, tmp, size);
+    trace_memory_region_ops_write(mr->name, addr, tmp, size);
     mr->ops->old_mmio.write[ctz32(size)](mr->opaque, addr, tmp);
 }
 
@@ -439,7 +440,7 @@ static void memory_region_write_accessor(MemoryRegion *mr,
         qemu_flush_coalesced_mmio_buffer();
     }
     tmp = (*value >> shift) & mask;
-    trace_memory_region_ops_write(mr, addr, tmp, size);
+    trace_memory_region_ops_write(mr->name, addr, tmp, size);
     mr->ops->write(mr->opaque, addr, tmp, size);
 }
 
@@ -784,6 +785,7 @@ static void address_space_update_topology(AddressSpace *as)
 
 void memory_region_transaction_begin(void)
 {
+    trace_memory_region_transaction_begin(memory_region_transaction_depth);
     qemu_flush_coalesced_mmio_buffer();
     ++memory_region_transaction_depth;
 }
@@ -794,19 +796,15 @@ static void memory_region_clear_pending(void)
     ioeventfd_update_pending = false;
 }
 
-bool do_rkvm_debug;
-int qemu_get_ram_ptr_ok;
-int memory_region_get_ram_ptr_ok;
 void memory_region_transaction_commit(void)
 {
     AddressSpace *as;
 
     assert(memory_region_transaction_depth);
     --memory_region_transaction_depth;
+    trace_memory_region_transaction_commit(memory_region_transaction_depth);
     if (!memory_region_transaction_depth) {
         if (memory_region_update_pending) {
-            if (do_rkvm_debug)
-                fprintf(stderr, "updating memory topology\n");
             MEMORY_LISTENER_CALL_GLOBAL(begin, Forward);
 
             QTAILQ_FOREACH(as, &address_spaces, address_spaces_link) {
@@ -1174,6 +1172,7 @@ void memory_region_init_ram(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_addr = qemu_ram_alloc(size, mr);
+    RR_DEBUG("memory_region_init_ram %s", name);
 }
 
 #ifdef __linux__
@@ -1190,6 +1189,7 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram;
     mr->ram_addr = qemu_ram_alloc_from_file(size, mr, share, path, errp);
+    RR_DEBUG("memory_region_init_ram_from_file %s %s", name, path);
 }
 #endif
 
@@ -1204,6 +1204,7 @@ void memory_region_init_ram_ptr(MemoryRegion *mr,
     mr->terminates = true;
     mr->destructor = memory_region_destructor_ram_from_ptr;
     mr->ram_addr = qemu_ram_alloc_from_ptr(size, ptr, mr);
+    RR_DEBUG("memory_region_init_ram_ptr %s", name);
 }
 
 void memory_region_init_alias(MemoryRegion *mr,
@@ -1218,6 +1219,7 @@ void memory_region_init_alias(MemoryRegion *mr,
     mr->destructor = memory_region_destructor_alias;
     mr->alias = orig;
     mr->alias_offset = offset;
+    RR_DEBUG("memory_region_init_alias %s -> %s", name, orig->name);
 }
 
 void memory_region_init_rom_device(MemoryRegion *mr,
@@ -1457,12 +1459,6 @@ void *memory_region_get_ram_ptr(MemoryRegion *mr)
 
     assert(mr->terminates);
 
-    if (!memory_region_get_ram_ptr_ok) {
-        if (do_rkvm_debug) {
-            fprintf(stderr, "memory_region_get_ram_ptr 0x%llx\n",
-                    (long long)(mr->ram_addr & TARGET_PAGE_MASK));
-        }
-    }
     return qemu_get_ram_ptr(mr->ram_addr & TARGET_PAGE_MASK);
 }
 
@@ -1679,6 +1675,8 @@ static void memory_region_add_subregion_common(MemoryRegion *mr,
     subregion->container = mr;
     subregion->addr = offset;
     memory_region_update_container_subregions(subregion);
+    RR_DEBUG("memory_region_add_subregion_common %s -> %s",
+             subregion->name, mr->name);
 }
 
 void memory_region_add_subregion(MemoryRegion *mr,
@@ -1936,6 +1934,8 @@ void memory_listener_unregister(MemoryListener *listener)
 
 void address_space_init(AddressSpace *as, MemoryRegion *root, const char *name)
 {
+    static int as_record_id_counter;
+    static int anonymous_as_counter;
     if (QTAILQ_EMPTY(&address_spaces)) {
         memory_init();
     }
@@ -1947,10 +1947,16 @@ void address_space_init(AddressSpace *as, MemoryRegion *root, const char *name)
     as->ioeventfd_nb = 0;
     as->ioeventfds = NULL;
     QTAILQ_INSERT_TAIL(&address_spaces, as, address_spaces_link);
-    as->name = g_strdup(name ? name : "anonymous");
+    if (name) {
+        as->name = g_strdup(name);
+    } else {
+        as->name = g_strdup_printf("anonymous%d", anonymous_as_counter++);
+    }
+    as->as_record_id = ++as_record_id_counter;
     address_space_init_dispatch(as);
     memory_region_update_pending |= root->enabled;
     memory_region_transaction_commit();
+    rr_address_space(as);
 }
 
 void address_space_destroy(AddressSpace *as)
