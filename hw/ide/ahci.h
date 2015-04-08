@@ -260,12 +260,12 @@ struct AHCIDevice {
     AHCIPortRegs port_regs;
     struct AHCIState *hba;
     QEMUBH *check_bh;
-    uint8_t *lst;
-    uint8_t *res_fis;
+    MemoryPage lst;
+    MemoryPage res_fis;
     bool done_atapi_packet;
     int32_t busy_slot;
     bool init_d2h_sent;
-    AHCICmdHdr *cur_cmd;
+    MemorySubPage cur_cmd;
     NCQTransferState ncq_tfs[AHCI_MAX_CMDS];
 };
 

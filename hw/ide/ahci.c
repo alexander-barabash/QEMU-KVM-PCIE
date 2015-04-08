@@ -175,22 +175,6 @@ static void ahci_trigger_irq(AHCIState *s, AHCIDevice *d,
     ahci_check_irq(s);
 }
 
-static void map_page(AddressSpace *as, uint8_t **ptr, uint64_t addr,
-                     uint32_t wanted)
-{
-    hwaddr len = wanted;
-
-    if (*ptr) {
-        dma_memory_unmap(as, *ptr, len, DMA_DIRECTION_FROM_DEVICE, len);
-    }
-
-    *ptr = dma_memory_map(as, addr, &len, DMA_DIRECTION_FROM_DEVICE);
-    if (len < wanted) {
-        dma_memory_unmap(as, *ptr, len, DMA_DIRECTION_FROM_DEVICE, len);
-        *ptr = NULL;
-    }
-}
-
 static void  ahci_port_write(AHCIState *s, int port, int offset, uint32_t val)
 {
     AHCIPortRegs *pr = &s->dev[port].port_regs;
@@ -199,25 +183,29 @@ static void  ahci_port_write(AHCIState *s, int port, int offset, uint32_t val)
     switch (offset) {
         case PORT_LST_ADDR:
             pr->lst_addr = val;
-            map_page(s->as, &s->dev[port].lst,
-                     ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr, 1024);
-            s->dev[port].cur_cmd = NULL;
+            mem_page_setup(&s->dev[port].lst, s->as,
+                           ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr,
+                           1024, true);
+            mem_subpage_clear(&s->dev[port].cur_cmd);
             break;
         case PORT_LST_ADDR_HI:
             pr->lst_addr_hi = val;
-            map_page(s->as, &s->dev[port].lst,
-                     ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr, 1024);
-            s->dev[port].cur_cmd = NULL;
+            mem_page_setup(&s->dev[port].lst, s->as,
+                           ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr,
+                           1024, true);
+            mem_subpage_clear(&s->dev[port].cur_cmd);
             break;
         case PORT_FIS_ADDR:
             pr->fis_addr = val;
-            map_page(s->as, &s->dev[port].res_fis,
-                     ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr, 256);
+            mem_page_setup(&s->dev[port].res_fis, s->as,
+                           ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr,
+                           256, true);
             break;
         case PORT_FIS_ADDR_HI:
             pr->fis_addr_hi = val;
-            map_page(s->as, &s->dev[port].res_fis,
-                     ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr, 256);
+            mem_page_setup(&s->dev[port].res_fis, s->as,
+                           ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr,
+                           256, true);
             break;
         case PORT_IRQ_STAT:
             pr->irq_stat &= ~val;
@@ -565,14 +553,19 @@ static void ahci_write_fis_sdb(AHCIState *s, int port, uint32_t finished)
 {
     AHCIPortRegs *pr = &s->dev[port].port_regs;
     IDEState *ide_state;
+    MemorySubPage sdb_fis_subpage;
     uint8_t *sdb_fis;
 
-    if (!s->dev[port].res_fis ||
+    if (!mem_page_valid(&s->dev[port].res_fis) ||
         !(pr->cmd & PORT_CMD_FIS_RX)) {
         return;
     }
 
-    sdb_fis = &s->dev[port].res_fis[RES_FIS_SDBFIS];
+    sdb_fis = mem_subpage_init(&sdb_fis_subpage, &s->dev[port].res_fis,
+                               RES_FIS_SDBFIS, 8);
+    if (!sdb_fis) {
+        return;
+    }
     ide_state = &s->dev[port].port.ifs[0];
 
     /* clear memory */
@@ -583,6 +576,7 @@ static void ahci_write_fis_sdb(AHCIState *s, int port, uint32_t finished)
     sdb_fis[2] = ide_state->status & 0x77;
     s->dev[port].finished |= finished;
     *(uint32_t*)(sdb_fis + 4) = cpu_to_le32(s->dev[port].finished);
+    mem_subpage_unmap(&sdb_fis_subpage);
 
     ahci_trigger_irq(s, &s->dev[port], PORT_IRQ_SDB_FIS);
 }
@@ -590,35 +584,36 @@ static void ahci_write_fis_sdb(AHCIState *s, int port, uint32_t finished)
 static void ahci_write_fis_pio(AHCIDevice *ad, uint16_t len)
 {
     AHCIPortRegs *pr = &ad->port_regs;
+    MemorySubPage pio_fis_subpage;
     uint8_t *pio_fis, *cmd_fis;
+    MemoryPage cmd_fis_page;
     uint64_t tbl_addr;
-    dma_addr_t cmd_len = 0x80;
 
-    if (!ad->res_fis || !(pr->cmd & PORT_CMD_FIS_RX)) {
+    if (!mem_page_valid(&ad->res_fis) || !(pr->cmd & PORT_CMD_FIS_RX)) {
         return;
     }
 
     /* map cmd_fis */
-    tbl_addr = le64_to_cpu(ad->cur_cmd->tbl_addr);
-    cmd_fis = dma_memory_map(ad->hba->as, tbl_addr, &cmd_len,
-                             DMA_DIRECTION_TO_DEVICE);
+    tbl_addr = mem_subpage_read64(&ad->cur_cmd, offsetof(AHCICmdHdr, tbl_addr));
+    DPRINTF(ad->port_no, "Read 0x%"PRIX64" at 0x%"PRIX64"\n",
+            tbl_addr, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, tbl_addr));
+    tbl_addr = le64_to_cpu(tbl_addr);
+    mem_page_init(&cmd_fis_page, ad->hba->as, tbl_addr, 0x80, false);
+    cmd_fis = mem_page_map(&cmd_fis_page);
 
     if (cmd_fis == NULL) {
-        DPRINTF(ad->port_no, "dma_memory_map failed in ahci_write_fis_pio");
+        DPRINTF(ad->port_no, "mem_page_map failed in ahci_write_fis_pio");
         ahci_trigger_irq(ad->hba, ad, PORT_IRQ_HBUS_ERR);
         return;
     }
 
-    if (cmd_len != 0x80) {
-        DPRINTF(ad->port_no,
-                "dma_memory_map mapped too few bytes in ahci_write_fis_pio");
-        dma_memory_unmap(ad->hba->as, cmd_fis, cmd_len,
-                         DMA_DIRECTION_TO_DEVICE, cmd_len);
-        ahci_trigger_irq(ad->hba, ad, PORT_IRQ_HBUS_ERR);
+    pio_fis = mem_subpage_init(&pio_fis_subpage, &ad->res_fis,
+                               RES_FIS_PSFIS, 20);
+    if (!pio_fis) {
+        mem_page_unmap(&cmd_fis_page);
         return;
     }
-
-    pio_fis = &ad->res_fis[RES_FIS_PSFIS];
 
     pio_fis[0] = 0x5f;
     pio_fis[1] = (ad->hba->control_regs.irqstatus ? (1 << 6) : 0);
@@ -645,34 +640,44 @@ static void ahci_write_fis_pio(AHCIDevice *ad, uint16_t len)
     if (pio_fis[2] & ERR_STAT) {
         ahci_trigger_irq(ad->hba, ad, PORT_IRQ_TF_ERR);
     }
+    mem_subpage_unmap(&pio_fis_subpage);
 
     ahci_trigger_irq(ad->hba, ad, PORT_IRQ_PIOS_FIS);
 
-    dma_memory_unmap(ad->hba->as, cmd_fis, cmd_len,
-                     DMA_DIRECTION_TO_DEVICE, cmd_len);
+    mem_page_unmap(&cmd_fis_page);
 }
 
 static void ahci_write_fis_d2h(AHCIDevice *ad, uint8_t *cmd_fis)
 {
     AHCIPortRegs *pr = &ad->port_regs;
+    MemorySubPage d2h_fis_subpage;
     uint8_t *d2h_fis;
     int i;
-    dma_addr_t cmd_len = 0x80;
     int cmd_mapped = 0;
+    MemoryPage cmd_fis_page;
 
-    if (!ad->res_fis || !(pr->cmd & PORT_CMD_FIS_RX)) {
+    if (!mem_page_valid(&ad->res_fis) || !(pr->cmd & PORT_CMD_FIS_RX)) {
+        return;
+    }
+
+    d2h_fis = mem_subpage_init(&d2h_fis_subpage, &ad->res_fis,
+                               RES_FIS_RFIS, 20);
+    if (!d2h_fis) {
         return;
     }
 
     if (!cmd_fis) {
         /* map cmd_fis */
-        uint64_t tbl_addr = le64_to_cpu(ad->cur_cmd->tbl_addr);
-        cmd_fis = dma_memory_map(ad->hba->as, tbl_addr, &cmd_len,
-                                 DMA_DIRECTION_TO_DEVICE);
+        uint64_t tbl_addr =
+            mem_subpage_read64(&ad->cur_cmd, offsetof(AHCICmdHdr, tbl_addr));
+        DPRINTF(ad->port_no, "Read 0x%"PRIX64" at 0x%"PRIX64"\n",
+                tbl_addr, mem_subpage_addr(&ad->cur_cmd) +
+                offsetof(AHCICmdHdr, tbl_addr));
+        tbl_addr = le64_to_cpu(tbl_addr);
+        mem_page_init(&cmd_fis_page, ad->hba->as, tbl_addr, 0x80, false);
+        cmd_fis = mem_page_map(&cmd_fis_page);
         cmd_mapped = 1;
     }
-
-    d2h_fis = &ad->res_fis[RES_FIS_RFIS];
 
     d2h_fis[0] = 0x34;
     d2h_fis[1] = (ad->hba->control_regs.irqstatus ? (1 << 6) : 0);
@@ -697,11 +702,12 @@ static void ahci_write_fis_d2h(AHCIDevice *ad, uint8_t *cmd_fis)
         ahci_trigger_irq(ad->hba, ad, PORT_IRQ_TF_ERR);
     }
 
+    mem_subpage_unmap(&d2h_fis_subpage);
+
     ahci_trigger_irq(ad->hba, ad, PORT_IRQ_D2H_REG_FIS);
 
     if (cmd_mapped) {
-        dma_memory_unmap(ad->hba->as, cmd_fis, cmd_len,
-                         DMA_DIRECTION_TO_DEVICE, cmd_len);
+        mem_page_unmap(&cmd_fis_page);
     }
 }
 
@@ -712,13 +718,17 @@ static int prdt_tbl_entry_size(const AHCI_SG *tbl)
 
 static int ahci_populate_sglist(AHCIDevice *ad, QEMUSGList *sglist, int offset)
 {
-    AHCICmdHdr *cmd = ad->cur_cmd;
-    uint32_t opts = le32_to_cpu(cmd->opts);
-    uint64_t prdt_addr = le64_to_cpu(cmd->tbl_addr) + 0x80;
+    uint32_t _opts =
+        mem_subpage_read32(&ad->cur_cmd, offsetof(AHCICmdHdr, opts));
+    uint32_t opts = le32_to_cpu(_opts);
+    uint64_t tbl_addr =
+        mem_subpage_read64(&ad->cur_cmd, offsetof(AHCICmdHdr, tbl_addr));
+    uint64_t prdt_addr = le64_to_cpu(tbl_addr) + 0x80;
+
     int sglist_alloc_hint = opts >> AHCI_CMD_HDR_PRDT_LEN;
     dma_addr_t prdt_len = (sglist_alloc_hint * sizeof(AHCI_SG));
-    dma_addr_t real_prdt_len = prdt_len;
     uint8_t *prdt;
+    MemoryPage prdt_page;
     int i;
     int r = 0;
     int sum = 0;
@@ -728,22 +738,26 @@ static int ahci_populate_sglist(AHCIDevice *ad, QEMUSGList *sglist, int offset)
     IDEBus *bus = &ad->port;
     BusState *qbus = BUS(bus);
 
+    DPRINTF(ad->port_no, "offset=%d\n", offset);
+
+    DPRINTF(ad->port_no, "Read 0x%x at 0x%"PRIX64"\n",
+            _opts, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, opts));
+
+    DPRINTF(ad->port_no, "Read 0x%"PRIX64" at 0x%"PRIX64"\n",
+            tbl_addr, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, tbl_addr));
+
     if (!sglist_alloc_hint) {
         DPRINTF(ad->port_no, "no sg list given by guest: 0x%08x\n", opts);
         return -1;
     }
 
     /* map PRDT */
-    if (!(prdt = dma_memory_map(ad->hba->as, prdt_addr, &prdt_len,
-                                DMA_DIRECTION_TO_DEVICE))){
+    mem_page_init(&prdt_page, ad->hba->as, prdt_addr, prdt_len, false);
+    if (!(prdt = mem_page_map(&prdt_page))) {
         DPRINTF(ad->port_no, "map failed\n");
         return -1;
-    }
-
-    if (prdt_len < real_prdt_len) {
-        DPRINTF(ad->port_no, "mapped less than expected\n");
-        r = -1;
-        goto out;
     }
 
     /* Get entries in the PRDT, init a qemu sglist accordingly */
@@ -781,8 +795,7 @@ static int ahci_populate_sglist(AHCIDevice *ad, QEMUSGList *sglist, int offset)
     }
 
 out:
-    dma_memory_unmap(ad->hba->as, prdt, prdt_len,
-                     DMA_DIRECTION_TO_DEVICE, prdt_len);
+    mem_page_unmap(&prdt_page);
     return r;
 }
 
@@ -892,7 +905,9 @@ static int handle_cmd(AHCIState *s, int port, int slot)
     uint64_t tbl_addr;
     AHCICmdHdr *cmd;
     uint8_t *cmd_fis;
-    dma_addr_t cmd_len;
+    MemoryPage cmd_fis_page;
+
+    DPRINTF(port, "slot=%d\n", slot);
 
     if (s->dev[port].port.ifs[0].status & (BUSY_STAT|DRQ_STAT)) {
         /* Engine currently busy, try again later */
@@ -900,25 +915,24 @@ static int handle_cmd(AHCIState *s, int port, int slot)
         return -1;
     }
 
-    cmd = &((AHCICmdHdr *)s->dev[port].lst)[slot];
-
-    if (!s->dev[port].lst) {
+    /* remember current slot handle for later */
+    cmd = (AHCICmdHdr *)mem_subpage_map(&s->dev[port].cur_cmd, &s->dev[port].lst,
+                                        slot * sizeof(AHCICmdHdr), sizeof(AHCICmdHdr));
+    
+    if (!cmd) {
         DPRINTF(port, "error: lst not given but cmd handled");
         return -1;
     }
 
-    /* remember current slot handle for later */
-    s->dev[port].cur_cmd = cmd;
-
     opts = le32_to_cpu(cmd->opts);
     tbl_addr = le64_to_cpu(cmd->tbl_addr);
 
-    cmd_len = 0x80;
-    cmd_fis = dma_memory_map(s->as, tbl_addr, &cmd_len,
-                             DMA_DIRECTION_FROM_DEVICE);
+    mem_page_init(&cmd_fis_page, s->as, tbl_addr, 0x80, false);
+    cmd_fis = mem_page_map(&cmd_fis_page);
 
     if (!cmd_fis) {
         DPRINTF(port, "error: guest passed us an invalid cmd fis\n");
+        mem_subpage_unmap(&s->dev[port].cur_cmd);
         return -1;
     }
 
@@ -930,7 +944,7 @@ static int handle_cmd(AHCIState *s, int port, int slot)
         goto out;
     }
 
-    debug_print_fis(cmd_fis, 0x90);
+    debug_print_fis(cmd_fis, 0x80);
     //debug_print_fis(cmd_fis, (opts & AHCI_CMD_HDR_CMD_FIS_LEN) * 4);
 
     switch (cmd_fis[0]) {
@@ -1037,8 +1051,9 @@ static int handle_cmd(AHCIState *s, int port, int slot)
     }
 
 out:
-    dma_memory_unmap(s->as, cmd_fis, cmd_len, DMA_DIRECTION_FROM_DEVICE,
-                     cmd_len);
+    
+    mem_page_unmap(&cmd_fis_page);
+    mem_subpage_unmap(&s->dev[port].cur_cmd);
 
     if (s->dev[port].port.ifs[0].status & (BUSY_STAT|DRQ_STAT)) {
         /* async command, complete later */
@@ -1057,10 +1072,17 @@ static void ahci_start_transfer(IDEDMA *dma)
     IDEState *s = &ad->port.ifs[0];
     uint32_t size = (uint32_t)(s->data_end - s->data_ptr);
     /* write == ram -> device */
-    uint32_t opts = le32_to_cpu(ad->cur_cmd->opts);
+    uint32_t _opts =
+        mem_subpage_read32(&ad->cur_cmd, offsetof(AHCICmdHdr, opts));
+    uint32_t opts = le32_to_cpu(_opts);
     int is_write = opts & AHCI_CMD_WRITE;
     int is_atapi = opts & AHCI_CMD_ATAPI;
     int has_sglist = 0;
+    uint32_t status;
+
+    DPRINTF(ad->port_no, "Read 0x%x at 0x%"PRIX64"\n",
+            _opts, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, opts));
 
     if (is_atapi && !ad->done_atapi_packet) {
         /* already prepopulated iobuffer */
@@ -1085,7 +1107,15 @@ static void ahci_start_transfer(IDEDMA *dma)
     }
 
     /* update number of transferred bytes */
-    ad->cur_cmd->status = cpu_to_le32(le32_to_cpu(ad->cur_cmd->status) + size);
+    status = mem_subpage_read32(&ad->cur_cmd, offsetof(AHCICmdHdr, status));
+    DPRINTF(ad->port_no, "Read 0x%x at 0x%"PRIX64"\n",
+            status, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, status));
+    mem_subpage_write32(&ad->cur_cmd, offsetof(AHCICmdHdr, status),
+                        cpu_to_le32(status) + size);
+    DPRINTF(ad->port_no, "Wrote 0x%x at 0x%"PRIX64"\n",
+            cpu_to_le32(status) + size, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, status));
 
 out:
     /* declare that we processed everything */
@@ -1099,7 +1129,11 @@ out:
 
     if (!(s->status & DRQ_STAT)) {
         /* done with PIO send/receive */
-        ahci_write_fis_pio(ad, le32_to_cpu(ad->cur_cmd->status));
+        status = mem_subpage_read32(&ad->cur_cmd, offsetof(AHCICmdHdr, status));
+        DPRINTF(ad->port_no, "Read 0x%x at 0x%"PRIX64"\n",
+                status, mem_subpage_addr(&ad->cur_cmd)
+                + offsetof(AHCICmdHdr, status));
+        ahci_write_fis_pio(ad, le32_to_cpu(status));
     }
 }
 
@@ -1132,6 +1166,7 @@ static int ahci_dma_rw_buf(IDEDMA *dma, int is_write)
     IDEState *s = &ad->port.ifs[0];
     uint8_t *p = s->io_buffer + s->io_buffer_index;
     int l = s->io_buffer_size - s->io_buffer_index;
+    uint32_t status;
 
     if (ahci_populate_sglist(ad, &s->sg, s->io_buffer_offset)) {
         return 0;
@@ -1147,7 +1182,16 @@ static int ahci_dma_rw_buf(IDEDMA *dma, int is_write)
     qemu_sglist_destroy(&s->sg);
 
     /* update number of transferred bytes */
-    ad->cur_cmd->status = cpu_to_le32(le32_to_cpu(ad->cur_cmd->status) + l);
+    status = mem_subpage_read32(&ad->cur_cmd, offsetof(AHCICmdHdr, status));
+    DPRINTF(ad->port_no, "Read 0x%x at 0x%"PRIX64"\n",
+            status, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, status));
+    mem_subpage_write32(&ad->cur_cmd, offsetof(AHCICmdHdr, status),
+                        cpu_to_le32(le32_to_cpu(status) + l));
+    DPRINTF(ad->port_no, "Wrote 0x%x at 0x%"PRIX64"\n",
+            cpu_to_le32(status) + l, mem_subpage_addr(&ad->cur_cmd)
+            + offsetof(AHCICmdHdr, status));
+
     s->io_buffer_index += l;
     s->io_buffer_offset += l;
 
@@ -1295,10 +1339,12 @@ static int ahci_state_post_load(void *opaque, int version_id)
         ad = &s->dev[i];
         AHCIPortRegs *pr = &ad->port_regs;
 
-        map_page(s->as, &ad->lst,
-                 ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr, 1024);
-        map_page(s->as, &ad->res_fis,
-                 ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr, 256);
+        mem_page_setup(&ad->lst, s->as,
+                       ((uint64_t)pr->lst_addr_hi << 32) | pr->lst_addr,
+                       1024, true);
+        mem_page_setup(&ad->res_fis, s->as,
+                       ((uint64_t)pr->fis_addr_hi << 32) | pr->fis_addr,
+                       256, true);
         /*
          * All pending i/o should be flushed out on a migrate. However,
          * we might not have cleared the busy_slot since this is done
@@ -1347,7 +1393,7 @@ typedef struct SysbusAHCIState {
 
 static const VMStateDescription vmstate_sysbus_ahci = {
     .name = "sysbus-ahci",
-    .unmigratable = 1, /* Still buggy under I/O load */
+    .unmigratable = 0, /* Still buggy under I/O load */
     .fields = (VMStateField[]) {
         VMSTATE_AHCI(ahci, SysbusAHCIState),
         VMSTATE_END_OF_LIST()
