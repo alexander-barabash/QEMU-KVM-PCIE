@@ -1,11 +1,18 @@
 #ifndef QEMU_IPC_DEBUG_H
 #define QEMU_IPC_DEBUG_H
 
-//#define EXTERNAL_PCI_DEBUG
-
 extern bool ipc_debug_enabled;
-#if defined(EXTERNAL_PCI_DEBUG) && defined(IPC_DBGKEY)
-#define IPC_DEBUG_ENUM(x, v) static bool IPC_DEBUG_##x = v
+#if defined(IPC_DBGKEY)
+#define IPC_DEBUG_ENUM(x) static bool IPC_DEBUG_##x
+#define IPC_DEBUG_CONSTRUCT(key, x)                                     \
+    IPC_DEBUG_ENUM(x);                                                  \
+    static void __attribute__((constructor)) constructor_IPC_DEBUG_##x(void) \
+    {                                                                   \
+        const char *envvalue = getenv("IPC_DEBUG_" #key "_" #x);        \
+        if (envvalue && *envvalue && (*envvalue != '0')) {              \
+            IPC_DEBUG_##x = true;                                       \
+        }                                                               \
+    }
 #define IF_DBGOUT(what, code) do {                      \
         if (IPC_DEBUG_##what && ipc_debug_enabled) {    \
             code;                                       \
@@ -24,14 +31,15 @@ extern bool ipc_debug_enabled;
         }                                                               \
     } while (0)
 #else
-#define IPC_DEBUG_ENUM(x, v)
+#define IPC_DEBUG_ENUM(x)
+#define IPC_DEBUG_CONSTRUCT(key, x)
 #define IF_DBGOUT(what, code) do {} while (0)
-#endif /* defined(EXTERNAL_PCI_DEBUG) && defined(IPC_DBGKEY) */
+#endif /* defined(IPC_DBGKEY) */
 
 #define	DBGOUT(what, fmt, ...) \
     IF_DBGOUT(what, DBGPRINT_IMPL(IPC_DBGKEY, ": " fmt "\n", ## __VA_ARGS__))
 
-#define IPC_DEBUG_ON(x) IPC_DEBUG_ENUM(x, true)
-#define IPC_DEBUG_OFF(x) IPC_DEBUG_ENUM(x, false)
+#define IPC_DEBUG_ON_IMPL(key, x) IPC_DEBUG_CONSTRUCT(key, x)
+#define IPC_DEBUG_ON(x) IPC_DEBUG_ON_IMPL(IPC_DBGKEY, x)
 
 #endif /* QEMU_IPC_DEBUG_H */
