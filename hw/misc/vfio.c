@@ -4449,7 +4449,9 @@ int vfio_container_ioctl(AddressSpace *as, int32_t groupid,
     /* We allow only certain ioctls to the container */
     switch (req) {
     case VFIO_CHECK_EXTENSION:
+#ifdef VFIO_IOMMU_SPAPR_TCE_GET_INFO
     case VFIO_IOMMU_SPAPR_TCE_GET_INFO:
+#endif
         break;
     default:
         /* Return an error on unknown requests */
