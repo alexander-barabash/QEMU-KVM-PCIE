@@ -27,6 +27,7 @@
 #include "block/thread-pool.h"
 #include "qemu/main-loop.h"
 #include "qemu/atomic.h"
+#include "rr.h"
 
 /***********************************************************/
 /* bottom halves (can be seen as timers which expire ASAP) */
@@ -122,6 +123,9 @@ void qemu_bh_schedule(QEMUBH *bh)
 
     if (bh->scheduled)
         return;
+    if (rr_bh_no_schedule()) {
+        return;
+    }
     ctx = bh->ctx;
     bh->idle = 0;
     /* Make sure that:
@@ -132,6 +136,7 @@ void qemu_bh_schedule(QEMUBH *bh)
      */
     smp_mb();
     bh->scheduled = 1;
+    rr_bh_schedule();
     aio_notify(ctx);
 }
 
