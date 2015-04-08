@@ -5450,3 +5450,8 @@ void qmp_rtc_reset_reinjection(Error **errp)
     error_set(errp, QERR_FEATURE_DISABLED, "rtc-reset-reinjection");
 }
 #endif
+
+int64_t qmp_vm_clock(Error **errp)
+{
+    return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+}
