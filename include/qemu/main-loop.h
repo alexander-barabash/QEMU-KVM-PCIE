@@ -81,6 +81,8 @@ int qemu_init_main_loop(void);
  */
 int main_loop_wait(int nonblocking);
 
+bool main_loop_should_exit(void);
+
 /**
  * qemu_get_aio_context: Return the main loop's AioContext
  */

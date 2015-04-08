@@ -114,6 +114,9 @@ extern int64_t max_delay;
 extern int64_t max_advance;
 void dump_drift_info(FILE *f, fprintf_function cpu_fprintf);
 
+/* rr */
+void configure_rr_deterministic(QemuOpts *opts, Error **errp);
+
 #include "qemu/osdep.h"
 #include "qemu/bswap.h"
 

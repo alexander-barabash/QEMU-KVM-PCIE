@@ -119,6 +119,8 @@ int main(int argc, char **argv)
 #include "qom/object_interfaces.h"
 #include "qapi-event.h"
 
+#include "rr.h"
+
 #define DEFAULT_RAM_SIZE 128
 
 #define MAX_VIRTIO_CONSOLES 1
@@ -558,6 +560,35 @@ static QemuOptsList qemu_icount_opts = {
     },
 };
 
+static QemuOptsList qemu_rr_deterministic_opts = {
+    .name = "rr_deterministic",
+    .implied_opt_name = "file",
+    .merge_lists = true,
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_rr_deterministic_opts.head),
+    .desc = {
+        {
+            .name = "deterministic",
+            .type = QEMU_OPT_BOOL,
+        }, {
+            .name = "file",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "recordfile",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "replayfile",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "shift",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "mips",
+            .type = QEMU_OPT_STRING,
+        },
+        { /* end of list */ }
+    },
+};
+
 /**
  * Get machine options
  *
@@ -783,6 +814,7 @@ void qemu_get_timedate(struct tm *tm, int offset)
     time_t ti;
 
     time(&ti);
+    rr_time(&ti);
     ti += offset;
     if (rtc_date_offset == -1) {
         if (rtc_utc)
@@ -1971,9 +2003,12 @@ void qemu_system_debug_request(void)
     qemu_notify_event();
 }
 
-static bool main_loop_should_exit(void)
+bool main_loop_should_exit(void)
 {
     RunState r;
+    if (rr_exit) {
+        return true;
+    }
     if (qemu_debug_requested()) {
         vm_stop(RUN_STATE_DEBUG);
     }
@@ -1986,6 +2021,7 @@ static bool main_loop_should_exit(void)
         if (no_shutdown) {
             vm_stop(RUN_STATE_SHUTDOWN);
         } else {
+            rr_exit = true;
             return true;
         }
     }
@@ -2032,7 +2068,10 @@ static void main_loop(void)
 #ifdef CONFIG_PROFILER
         dev_time += profile_getclock() - ti;
 #endif
-    } while (!main_loop_should_exit());
+        if (rr_exit) {
+            break;
+        }
+    } while (rr_deterministic || !main_loop_should_exit());
 }
 
 static void version(void)
@@ -3047,6 +3086,7 @@ int main(int argc, char **argv, char **envp)
     DisplayState *ds;
     int cyls, heads, secs, translation;
     QemuOpts *hda_opts = NULL, *opts, *machine_opts, *icount_opts = NULL;
+    QemuOpts *rr_deterministic_opts;
     QemuOptsList *olist;
     int optind;
     const char *optarg;
@@ -3112,6 +3152,7 @@ int main(int argc, char **argv, char **envp)
     qemu_add_opts(&qemu_name_opts);
     qemu_add_opts(&qemu_numa_opts);
     qemu_add_opts(&qemu_icount_opts);
+    qemu_add_opts(&qemu_rr_deterministic_opts);
 
     runstate_init();
 
@@ -3888,6 +3929,66 @@ int main(int argc, char **argv, char **envp)
                     exit(1);
                 }
                 break;
+            case QEMU_OPTION_deterministic:
+                {
+                    const char *old_file;
+                    const char *new_file;
+                    rr_deterministic_opts =
+                        qemu_find_opts_singleton("rr_deterministic");
+                    old_file = qemu_opt_get(rr_deterministic_opts, "file");
+                    if (optarg) {
+                        rr_deterministic_opts =
+                            qemu_opts_parse(qemu_find_opts("rr_deterministic"),
+                                            optarg, 1);
+                    }
+                    if (!rr_deterministic_opts) {
+                        exit(1);
+                    }
+                    new_file = qemu_opt_get(rr_deterministic_opts, "file");
+                    if (new_file) {
+                        if ((new_file != old_file) &&
+                            (!old_file || strcmp(old_file, new_file))) {
+                            fprintf(stderr, "Not expecting file option %s to -deterministic\n",
+                                    new_file);
+                        }
+                    } else {
+                    }
+                    qemu_opt_set(rr_deterministic_opts, "deterministic", "on");
+                }
+                break;
+            case QEMU_OPTION_record:
+            case QEMU_OPTION_replay:
+                {
+                    const char *old_file;
+                    const char *new_file;
+                    const char *filekey = (popt->index == QEMU_OPTION_record) ?
+                        "recordfile" : "replayfile";
+                    rr_deterministic_opts =
+                        qemu_find_opts_singleton("rr_deterministic");
+                    old_file = qemu_opt_get(rr_deterministic_opts, "file");
+                    rr_deterministic_opts =
+                        qemu_opts_parse(qemu_find_opts("rr_deterministic"),
+                                        optarg, 1);
+                    if (!rr_deterministic_opts) {
+                        exit(1);
+                    }
+                    new_file = qemu_opt_get(rr_deterministic_opts, "file");
+                    if (new_file) {
+                        if ((new_file != old_file) &&
+                            (!old_file || strcmp(old_file, new_file))) {
+                            qemu_opt_set(rr_deterministic_opts, filekey,
+                                         new_file);
+                        }
+                    } else {
+                        if (popt->index == QEMU_OPTION_record) {
+                            fprintf(stderr, "Missing Record filename\n");
+                        } else {
+                            fprintf(stderr, "Missing Replay filename\n");
+                        }
+                        exit(1);
+                    }
+                }
+                break;
             case QEMU_OPTION_incoming:
                 incoming = optarg;
                 runstate_set(RUN_STATE_INMIGRATE);
@@ -4055,6 +4156,13 @@ int main(int argc, char **argv, char **envp)
                 "Use -machine help to list supported machines!\n");
         exit(1);
     }
+
+    icount_opts = qemu_find_opts_singleton("icount");
+    configure_icount(icount_opts, &error_abort);
+    qemu_opts_del(icount_opts);
+
+    configure_rr_deterministic(qemu_find_opts_singleton("rr_deterministic"),
+                               &error_abort);
 
     current_machine = MACHINE(object_new(object_class_get_name(
                           OBJECT_CLASS(machine_class))));
@@ -4365,10 +4473,6 @@ int main(int argc, char **argv, char **envp)
     /* spice needs the timers to be initialized by this point */
     qemu_spice_init();
 #endif
-
-    icount_opts = qemu_find_opts_singleton("icount");
-    configure_icount(icount_opts, &error_abort);
-    qemu_opts_del(icount_opts);
 
     /* clean up network at qemu process termination */
     atexit(&net_cleanup);

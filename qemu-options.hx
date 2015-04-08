@@ -3051,6 +3051,39 @@ the guest clock runs ahead of the host clock. Typically this happens
 when the shift value is high (how high depends on the host machine).
 ETEXI
 
+DEF("deterministic", 0, QEMU_OPTION_deterministic, \
+    "-deterministic\n" \
+    "                enable deterministic execution;\n" \
+    "                entails -icount and -machine accel=tcg\n", QEMU_ARCH_ALL)
+STEXI
+@item -deterministic
+@findex -deterministic
+Enable deterministic execution.
+Entails -icount and -machine accel=tcg.
+ETEXI
+
+DEF("record", HAS_ARG, QEMU_OPTION_record, \
+    "-record file\n" \
+    "                enable execution recording to the file;\n" \
+    "                entails -icount and -machine accel=tcg\n", QEMU_ARCH_ALL)
+STEXI
+@item -record file
+@findex -record
+Enable execution recording to the file.
+Entails -icount and -machine accel=tcg.
+ETEXI
+
+DEF("replay", HAS_ARG, QEMU_OPTION_replay, \
+    "-replay file\n" \
+    "                enable execution replay from the file;\n" \
+    "                entails -icount and -machine accel=tcg\n", QEMU_ARCH_ALL)
+STEXI
+@item -replay file
+@findex -replay
+Enable execution recording to the file.
+Entails -icount and -machine accel=tcg.
+ETEXI
+
 DEF("watchdog", HAS_ARG, QEMU_OPTION_watchdog, \
     "-watchdog i6300esb|ib700\n" \
     "                enable virtual hardware watchdog [default=none]\n",

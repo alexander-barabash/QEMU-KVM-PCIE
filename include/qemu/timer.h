@@ -4,6 +4,7 @@
 #include "qemu/typedefs.h"
 #include "qemu-common.h"
 #include "qemu/notify.h"
+#include "rr.h"
 
 /* timers */
 
@@ -205,6 +206,9 @@ void qemu_clock_enable(QEMUClockType type, bool enabled);
  * Warp a clock to a new value
  */
 void qemu_clock_warp(QEMUClockType type);
+
+void add_icount_clock_bias(int64_t warp_delta);
+void shift_instruction_counter(int64_t delta);
 
 /**
  * qemu_clock_register_reset_notifier:
@@ -689,6 +693,7 @@ int64_t cpu_get_ticks(void);
 void cpu_enable_ticks(void);
 /* Caller must hold BQL */
 void cpu_disable_ticks(void);
+void cpu_offset_clock(int64_t cpu_clock_offset);
 
 static inline int64_t get_ticks_per_sec(void)
 {
@@ -749,6 +754,10 @@ int64_t cpu_get_clock(void);
 int64_t cpu_get_clock_offset(void);
 int64_t cpu_icount_to_ns(int64_t icount);
 int64_t cpu_ns_to_icount(uint64_t ns);
+int64_t cpu_get_rr_deadline(void);
+void cpu_set_rr_deadline(int64_t deadline);
+void cpu_set_rr_deadline_immediate(void);
+void cpu_set_rr_bh_deadline(int64_t deadline);
 
 /*******************************************/
 /* host CPU ticks (if available) */

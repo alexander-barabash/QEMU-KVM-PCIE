@@ -40,9 +40,11 @@
 #include "qemu/bitmap.h"
 #include "qemu/seqlock.h"
 #include "qemu/host-utils.h"
+#include "qemu/config-file.h"
 #include "qapi-event.h"
 #include "hw/nmi.h"
 #include "hw/xen/xen.h"
+#include "rr.h"
 
 #ifndef _WIN32
 #include "qemu/compatfd.h"
@@ -109,6 +111,8 @@ static bool all_cpu_threads_idle(void)
 
 static int64_t vm_clock_warp_start = -1;
 
+#define NEW_ICOUNT
+#ifdef NEW_ICOUNT
 #ifdef CONFIG_INT128
 typedef uint64_t icount_multiplier_type;
 #else
@@ -124,6 +128,13 @@ static uint64_t one_icount_ns;
 static uint64_t one_ns_icount;
 /* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
 #define MAX_ICOUNT_SHIFT 10
+#define MAX_ICOUNT_MIPS 4096
+#else
+/* Conversion factor from emulated instructions to virtual clock ticks.  */
+static int icount_time_shift;
+/* Arbitrarily pick 1MIPS as the minimum allowable speed.  */
+#define MAX_ICOUNT_SHIFT 10
+#endif
 
 static QEMUTimer *icount_rt_timer;
 static QEMUTimer *icount_vm_timer;
@@ -146,9 +157,50 @@ typedef struct TimersState {
     int64_t qemu_icount_bias;
     /* Only written by TCG thread */
     int64_t qemu_icount;
+    int64_t rr_deadline;
+    int64_t rr_bh_deadline;
 } TimersState;
 
 static TimersState timers_state;
+
+int64_t cpu_get_rr_deadline(void)
+{
+    return timers_state.rr_deadline;
+}
+
+void cpu_set_rr_deadline(int64_t deadline)
+{
+    if (deadline != timers_state.rr_deadline) {
+        CPUState *cpu = current_cpu;
+        if (cpu) {
+            int64_t to_deadline = deadline - timers_state.qemu_icount;
+            if (to_deadline < 0) {
+                cpu->icount_decr.u16.high = 0xffff;
+            }
+        }
+        timers_state.rr_deadline = deadline;
+    }
+}
+
+void cpu_set_rr_deadline_immediate(void)
+{
+    CPUState *cpu = current_cpu;
+    if (cpu) {
+        cpu->icount_decr.u16.high = 0xffff;
+    }
+}
+
+void cpu_set_rr_bh_deadline(int64_t deadline)
+{
+    CPUState *cpu = current_cpu;
+    if (cpu) {
+        int64_t to_deadline = deadline - timers_state.qemu_icount;
+        if (to_deadline < 0) {
+            cpu_exit(cpu);
+        }
+    }
+    timers_state.rr_bh_deadline = deadline;
+}
 
 /* Return the instruction counter.  */
 static int64_t cpu_get_instruction_counter_locked(void)
@@ -158,10 +210,10 @@ static int64_t cpu_get_instruction_counter_locked(void)
 
     icount = timers_state.qemu_icount;
     if (cpu) {
-        if (!cpu_can_do_io(cpu)) {
+        if (!cpu_can_do_io(cpu) && !rr_reading_clock) {
             fprintf(stderr, "Bad clock read\n");
         }
-        icount -= (cpu->icount_decr.u16.low + cpu->icount_extra);
+        icount -= ((int64_t)(uint64_t)cpu->icount_decr.u16.low + cpu->icount_extra);
     }
     return icount;
 }
@@ -200,6 +252,7 @@ int64_t cpu_get_icount(void)
     return icount;
 }
 
+#ifdef NEW_ICOUNT
 static void set_icount_lshift_and_divisor(int lshift, uint32_t divisor)
 {
     int leading_zeros = clz32(divisor);
@@ -229,7 +282,7 @@ static void set_icount_lshift_and_divisor(int lshift, uint32_t divisor)
 
 static bool set_icount_time_shift(int value)
 {
-    if ((value <= 0) || (value > 10)) {
+    if ((value <= 0) || (value > MAX_ICOUNT_SHIFT)) {
         return false;
     }
     set_icount_lshift_and_divisor(value, 1);
@@ -238,12 +291,13 @@ static bool set_icount_time_shift(int value)
 
 static bool set_icount_mips(int value)
 {
-    if ((value < 0) || (value > MAX_ICOUNT_SHIFT)) {
+    if ((value < 0) || (value > MAX_ICOUNT_MIPS)) {
         return false;
     }
     set_icount_lshift_and_divisor(10, value);
     return true;
 }
+#endif
 
 static inline uint64_t do_rshift64(uint64_t num, int rshift)
 {
@@ -271,7 +325,7 @@ static inline __uint128_t do_rshift128(__uint128_t num, int rshift)
 /*
  * Computes floor(num * 2 ^ (-rshift) * multiplier) mod 2^64.
  */
-static uint64_t mul_rshift(uint64_t num, uint64_t multiplier, int rshift)
+static inline uint64_t mul_rshift(uint64_t num, uint64_t multiplier, int rshift)
 {
     if (multiplier == 1) {
         return do_rshift64(num, rshift);
@@ -314,9 +368,14 @@ static uint64_t mul_rshift(uint64_t num, uint32_t multiplier, int rshift)
  */
 int64_t cpu_icount_to_ns(int64_t icount)
 {
+#ifdef NEW_ICOUNT
     return mul_rshift(icount, icount_multiplier, icount_rshift);
+#else
+    return icount << icount_time_shift;
+#endif
 }
 
+#ifdef NEW_ICOUNT
 /*
  * Converts interval in nanoseconds into interval in instructions.
  */
@@ -331,6 +390,8 @@ static void double_cpu_speed(void)
     ++icount_lshift;
     one_icount_ns = cpu_icount_to_ns(1);
     one_ns_icount = cpu_ns_to_icount(1);
+    fprintf(stderr, "double_cpu_speed: one_icount_ns = %"PRId64" one_ns_icount = %"PRId64"\n",
+            one_icount_ns, one_ns_icount);
 }
 
 static void half_cpu_speed(void)
@@ -339,7 +400,10 @@ static void half_cpu_speed(void)
     --icount_lshift;
     one_icount_ns = cpu_icount_to_ns(1);
     one_ns_icount = cpu_ns_to_icount(1);
+    fprintf(stderr, "half_cpu_speed: one_icount_ns = %"PRId64" one_ns_icount = %"PRId64"\n",
+            one_icount_ns, one_ns_icount);
 }
+#endif
 
 /* return the host CPU cycle counter and handle stop/restart */
 /* Caller must hold the BQL */
@@ -418,7 +482,9 @@ void cpu_enable_ticks(void)
     /* Here, the really thing protected by seqlock is cpu_clock_offset. */
     seqlock_write_lock(&timers_state.vm_clock_seqlock);
     if (!timers_state.cpu_ticks_enabled) {
-        timers_state.cpu_ticks_offset -= cpu_get_real_ticks();
+        if (!use_icount) {
+            timers_state.cpu_ticks_offset -= cpu_get_real_ticks();
+        }
         timers_state.cpu_clock_offset -= get_clock();
         timers_state.cpu_ticks_enabled = 1;
     }
@@ -434,9 +500,30 @@ void cpu_disable_ticks(void)
     /* Here, the really thing protected by seqlock is cpu_clock_offset. */
     seqlock_write_lock(&timers_state.vm_clock_seqlock);
     if (timers_state.cpu_ticks_enabled) {
-        timers_state.cpu_ticks_offset += cpu_get_real_ticks();
+        if (!use_icount) {
+            timers_state.cpu_ticks_offset += cpu_get_real_ticks();
+        }
         timers_state.cpu_clock_offset = cpu_get_clock_locked();
         timers_state.cpu_ticks_enabled = 0;
+    }
+    seqlock_write_unlock(&timers_state.vm_clock_seqlock);
+}
+
+void cpu_offset_clock(int64_t cpu_clock_offset)
+{
+    seqlock_write_lock(&timers_state.vm_clock_seqlock);
+    if (timers_state.cpu_ticks_enabled) {
+        if (!use_icount) {
+            timers_state.cpu_ticks_offset += cpu_get_real_ticks();
+        }
+        timers_state.cpu_clock_offset = cpu_get_clock_locked();
+    }
+    timers_state.cpu_clock_offset += cpu_clock_offset;
+    if (timers_state.cpu_ticks_enabled) {
+        if (!use_icount) {
+            timers_state.cpu_ticks_offset -= cpu_get_real_ticks();
+        }
+        timers_state.cpu_clock_offset -= get_clock();
     }
     seqlock_write_unlock(&timers_state.vm_clock_seqlock);
 }
@@ -468,18 +555,39 @@ static void icount_adjust(void)
     delta = cur_icount - cur_time;
     /* FIXME: This is a very crude algorithm, somewhat prone to oscillation.  */
     if (delta > 0
-        && last_delta + ICOUNT_WOBBLE < delta * 2) {
+        && last_delta + ICOUNT_WOBBLE < delta * 2
+#ifndef NEW_ICOUNT
+        && icount_time_shift > 0
+#endif
+) {
         /* The guest is getting too far ahead.  Slow time down.  */
+#ifdef NEW_ICOUNT
         half_cpu_speed();
+#else
+        icount_time_shift--;
+#endif
     }
     if (delta < 0
-        && last_delta - ICOUNT_WOBBLE > delta * 2) {
+        && last_delta - ICOUNT_WOBBLE > delta * 2
+#ifndef NEW_ICOUNT
+        && icount_time_shift < MAX_ICOUNT_SHIFT
+#endif
+) {
         /* The guest is getting too far behind.  Speed time up.  */
-        half_cpu_speed();
+#ifdef NEW_ICOUNT
+        double_cpu_speed();
+#else
+        icount_time_shift++;
+#endif
     }
     last_delta = delta;
     timers_state.qemu_icount_bias = cur_icount
-                              - cpu_icount_to_ns(timers_state.qemu_icount);
+#ifdef NEW_ICOUNT
+                              - cpu_icount_to_ns(timers_state.qemu_icount)
+#else
+                              - (timers_state.qemu_icount << icount_time_shift)
+#endif
+;
     seqlock_write_unlock(&timers_state.vm_clock_seqlock);
 }
 
@@ -498,6 +606,7 @@ static void icount_adjust_vm(void *opaque)
     icount_adjust();
 }
 
+#ifdef NEW_ICOUNT
 static int64_t qemu_icount_round(uint32_t ns)
 {
     uint64_t result;
@@ -513,9 +622,17 @@ static int64_t qemu_icount_round(uint32_t ns)
     }
     return result;
 }
-
-static void icount_warp_rt(void *opaque)
+#else
+static int64_t qemu_icount_round(int64_t count)
 {
+    return (count + (1 << icount_time_shift) - 1) >> icount_time_shift;
+}
+#endif
+
+static void icount_warp(void)
+{
+    int64_t warp_delta = 0;
+
     /* The icount_warp_timer is rescheduled soon after vm_clock_warp_start
      * changes from -1 to another value, so the race here is okay.
      */
@@ -523,10 +640,13 @@ static void icount_warp_rt(void *opaque)
         return;
     }
 
+    if (rr_replay) {
+        goto notify;
+    }
+
     seqlock_write_lock(&timers_state.vm_clock_seqlock);
     if (runstate_is_running()) {
         int64_t clock = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
-        int64_t warp_delta;
 
         warp_delta = clock - vm_clock_warp_start;
         if (use_icount == 2) {
@@ -541,12 +661,23 @@ static void icount_warp_rt(void *opaque)
         }
         timers_state.qemu_icount_bias += warp_delta;
     }
+    if (warp_delta && rr_record) {
+        uint64_t cur_icount = cpu_get_instruction_counter_locked();
+        RR_DEBUG_AT(cur_icount, "Clock warped by %"PRId64, warp_delta);
+        rr_record_clock_warp(warp_delta, cur_icount);
+    }
     vm_clock_warp_start = -1;
     seqlock_write_unlock(&timers_state.vm_clock_seqlock);
 
+ notify:
     if (qemu_clock_expired(QEMU_CLOCK_VIRTUAL)) {
         qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
     }
+}
+
+static void icount_warp_rt(void *opaque)
+{
+    icount_warp();
 }
 
 void qtest_clock_warp(int64_t dest)
@@ -564,6 +695,35 @@ void qtest_clock_warp(int64_t dest)
         clock = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     }
     qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
+}
+
+void add_icount_clock_bias(int64_t warp_delta)
+{
+    if (!use_icount) {
+        return;
+    }
+    if (!warp_delta) {
+        return;
+    }
+    seqlock_write_lock(&timers_state.vm_clock_seqlock);
+    timers_state.qemu_icount_bias += warp_delta;
+    if (rr_deterministic) {
+        uint64_t cur_icount = cpu_get_instruction_counter_locked();
+        RR_DEBUG_AT(cur_icount, "Clock warped by %"PRId64, warp_delta);
+        rr_record_clock_warp(warp_delta, cur_icount);
+    }
+    seqlock_write_unlock(&timers_state.vm_clock_seqlock);
+}
+
+void shift_instruction_counter(int64_t delta)
+{
+    if (!use_icount) {
+        return;
+    }
+    seqlock_write_lock(&timers_state.vm_clock_seqlock);
+    timers_state.qemu_icount += delta;
+    fprintf(stderr, "icount shifted by %"PRId64"\n", delta);
+    seqlock_write_unlock(&timers_state.vm_clock_seqlock);
 }
 
 void qemu_clock_warp(QEMUClockType type)
@@ -587,7 +747,7 @@ void qemu_clock_warp(QEMUClockType type)
      * CPU starts running, in case the CPU is woken by an event other than
      * the earliest QEMU_CLOCK_VIRTUAL timer.
      */
-    icount_warp_rt(NULL);
+    icount_warp();
     timer_del(icount_warp_timer);
     if (!all_cpu_threads_idle()) {
         return;
@@ -698,10 +858,14 @@ void configure_icount(QemuOpts *opts, Error **errp)
     if (icount_shift_option) {
         if (strcmp(icount_shift_option, "auto") != 0) {
             errno = 0;
+#ifdef NEW_ICOUNT
             if (!set_icount_time_shift(strtol(icount_shift_option, &rem_str, 0))) {
                 error_setg(errp, "icount: Invalid shift value");
                 return;
             }
+#else
+            icount_time_shift = strtol(icount_shift_option, &rem_str, 0);
+#endif
             if (errno != 0 || *rem_str != '\0' ||
                 !strlen(icount_shift_option)) {
                 error_setg(errp, "icount: Invalid shift value");
@@ -712,6 +876,7 @@ void configure_icount(QemuOpts *opts, Error **errp)
             auto_adjust_icounter = true;
         }
     } else {
+#ifdef NEW_ICOUNT
         if (strcmp(icount_mips_option, "auto") != 0) {
             errno = 0;
             if (!set_icount_mips(strtol(icount_mips_option, &rem_str, 0))) {
@@ -727,6 +892,7 @@ void configure_icount(QemuOpts *opts, Error **errp)
         } else {
             auto_adjust_icounter = true;
         }
+#endif
     }
     if (kvm_enabled() || xen_enabled()) {
         fprintf(stderr, "icount is not supported with kvm or xen\n");
@@ -734,7 +900,7 @@ void configure_icount(QemuOpts *opts, Error **errp)
     }
     icount_align_option = qemu_opt_get_bool(opts, "align", false);
     icount_warp_timer = timer_new_ns(QEMU_CLOCK_REALTIME,
-                                          icount_warp_rt, NULL);
+                                     icount_warp_rt, NULL);
     if (!auto_adjust_icounter) {
         use_icount = 1;
         return;
@@ -748,7 +914,11 @@ void configure_icount(QemuOpts *opts, Error **errp)
 
     /* 125MIPS seems a reasonable initial guess at the guest speed.
        It will be corrected fairly quickly anyway.  */
+#ifdef NEW_ICOUNT
     set_icount_time_shift(3);
+#else
+    icount_time_shift = 3;
+#endif
 
     /* Have both realtime and virtual time triggers for speed adjustment.
        The realtime trigger catches emulated time passing too slowly,
@@ -764,6 +934,85 @@ void configure_icount(QemuOpts *opts, Error **errp)
     timer_mod(icount_vm_timer,
                    qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                    get_ticks_per_sec() / 10);
+}
+
+static void configure_icount_default(Error **errp)
+{
+    QemuOptsList *icount_opts_list = qemu_find_opts("icount");
+    QemuOpts *icount_opts = qemu_opts_parse(icount_opts_list, "auto", 1);
+    configure_icount(icount_opts, errp);
+    if (!use_icount) {
+        fprintf(stderr, "Cannot configure icount.\n");
+        exit(1);
+    }
+}
+
+static void configure_rr_record(QemuOpts *opts)
+{
+    const char *file = qemu_opt_get(opts, "recordfile");
+    if (!file) {
+        return;
+    }
+
+    rr_record = true;
+
+    if (!rr_record_init(file)) {
+        fprintf(stderr, "Cannot start record.\n");
+        exit(1);
+    }
+}
+
+static void configure_rr_replay(QemuOpts *opts)
+{
+    const char *file = qemu_opt_get(opts, "replayfile");
+    if (!file) {
+        return;
+    }
+
+    rr_replay = true;
+
+    if (!rr_replay_init(file)) {
+        fprintf(stderr, "Cannot start replay.\n");
+        exit(1);
+    }
+}
+
+void configure_rr_deterministic(QemuOpts *opts, Error **errp)
+{
+    fprintf(stderr, "configure_rr_deterministic\n");
+    rr_deterministic =
+        qemu_opt_get_bool(opts, "deterministic", false) ||
+        qemu_opt_get(opts, "recordfile") ||
+        qemu_opt_get(opts, "replayfile");
+
+    if (!rr_deterministic) {
+        return;
+    }
+
+    if (kvm_enabled() || xen_enabled()) {
+        fprintf(stderr,
+                "Deterministic execution is not supported with kvm or xen\n");
+        exit(1);
+    }
+
+    if (!use_icount) {
+        configure_icount_default(errp);
+    }
+
+    if (use_icount != 1) {
+        fprintf(stderr,
+                "Deterministic execution is not supported "
+                "with auto-adjusting icount rate\n");
+        exit(1);
+    }
+
+    if (!rr_deterministic_init()) {
+        fprintf(stderr, "Cannot start deterministic execution.\n");
+        exit(1);
+    }
+
+    configure_rr_record(opts);
+    configure_rr_replay(opts);
 }
 
 /***********************************************************/
@@ -1110,13 +1359,22 @@ static void qemu_tcg_wait_io_event(void)
     CPUState *cpu;
 
     while (all_cpu_threads_idle()) {
-       /* Start accounting real time to the virtual clock if the CPUs
-          are idle.  */
+        /* Start accounting real time to the virtual clock if the CPUs
+           are idle.  */
         qemu_clock_warp(QEMU_CLOCK_VIRTUAL);
+        if (rr_deterministic) {
+            resume_all_vcpus();
+            break;
+        }
         qemu_cond_wait(tcg_halt_cond, &qemu_global_mutex);
     }
 
-    while (iothread_requesting_mutex) {
+    while (rr_deterministic &&
+           !main_loop_should_exit() &&
+           (main_loop_wait(true) > 0)) {
+    }
+
+    while ((!rr_deterministic || rr_exit) && iothread_requesting_mutex) {
         qemu_cond_wait(&qemu_io_proceeded_cond, &qemu_global_mutex);
     }
 
@@ -1242,13 +1500,18 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
         tcg_exec_all();
 
         if (use_icount) {
-            int64_t deadline = qemu_clock_deadline_ns_all(QEMU_CLOCK_VIRTUAL);
-
-            if (deadline == 0) {
+            if (timers_state.rr_bh_deadline == timers_state.qemu_icount) {
                 qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
+            } else {
+                int64_t deadline = qemu_clock_deadline_ns_all(QEMU_CLOCK_VIRTUAL);
+                
+                if (deadline == 0) {
+                    qemu_clock_notify(QEMU_CLOCK_VIRTUAL);
+                }
             }
         }
         qemu_tcg_wait_io_event();
+        rr_after_io_event();
     }
 
     return NULL;
@@ -1369,7 +1632,7 @@ void pause_all_vcpus(void)
         qemu_cpu_kick(cpu);
     }
 
-    if (qemu_in_vcpu_thread()) {
+    if (rr_deterministic || qemu_in_vcpu_thread()) {
         cpu_stop_current();
         if (!kvm_enabled()) {
             CPU_FOREACH(cpu) {
@@ -1554,6 +1817,27 @@ static int tcg_cpu_exec(CPUArchState *env)
         }
 
         count = qemu_icount_round(deadline);
+        if (rr_replay) {
+            count = 0xffff;
+        }
+        {
+            int64_t to_deadline =
+                timers_state.rr_deadline - timers_state.qemu_icount;
+            if (to_deadline > 0) {
+                if (count > to_deadline) {
+                    count = to_deadline;
+                }
+            }
+        }
+        {
+            int64_t to_deadline =
+                timers_state.rr_bh_deadline - timers_state.qemu_icount;
+            if (to_deadline > 0) {
+                if (count > to_deadline) {
+                    count = to_deadline;
+                }
+            }
+        }
         timers_state.qemu_icount += count;
         decr = (count > 0xffff) ? 0xffff : count;
         count -= decr;

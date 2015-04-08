@@ -29,6 +29,7 @@
 #include "slirp/libslirp.h"
 #include "qemu/main-loop.h"
 #include "block/aio.h"
+#include "rr.h"
 
 #ifndef _WIN32
 
@@ -200,6 +201,10 @@ static int os_host_main_loop_wait(int64_t timeout)
 
     glib_pollfds_fill(&timeout);
 
+    ret = qemu_poll_ns((GPollFD *)gpollfds->data, gpollfds->len, 0);
+    if (ret > 0) {
+        goto do_poll;
+    }
     /* If the I/O thread is very busy or we are incorrectly busy waiting in
      * the I/O thread, this can lead to starvation of the BQL such that the
      * VCPU threads never run.  To make sure we can detect the later case,
@@ -209,7 +214,7 @@ static int os_host_main_loop_wait(int64_t timeout)
     if (!timeout && (spin_counter > MAX_MAIN_LOOP_SPIN)) {
         static bool notified;
 
-        if (!notified && !qtest_enabled()) {
+        if (!rr_deterministic && !notified && !qtest_enabled()) {
             fprintf(stderr,
                     "main-loop: WARNING: I/O thread spun for %d iterations\n",
                     MAX_MAIN_LOOP_SPIN);
@@ -222,16 +227,13 @@ static int os_host_main_loop_wait(int64_t timeout)
     if (timeout) {
         spin_counter = 0;
         qemu_mutex_unlock_iothread();
+        ret = qemu_poll_ns((GPollFD *)gpollfds->data, gpollfds->len, timeout);
+        qemu_mutex_lock_iothread();
     } else {
         spin_counter++;
     }
 
-    ret = qemu_poll_ns((GPollFD *)gpollfds->data, gpollfds->len, timeout);
-
-    if (timeout) {
-        qemu_mutex_lock_iothread();
-    }
-
+ do_poll:
     glib_pollfds_poll();
     return ret;
 }
