@@ -1,0 +1,11 @@
+#ifndef QEMU_PRIVATE_NAME_H
+#define QEMU_PRIVATE_NAME_H
+
+#define PNAME_PREFIX PNAME_
+#define PNAME_SUFFIX _PNAME
+#define PNAME_CONCAT_impl(x, ...) x##__VA_ARGS__
+#define PNAME_CONCAT(x, y) PNAME_CONCAT_impl(x, y)
+#define PNAME(name) \
+    PNAME_CONCAT(PNAME_CONCAT(PNAME_PREFIX, name), PNAME_CONCAT(PNAME_SUFFIX, PNAME_DOMAIN()))
+
+#endif
