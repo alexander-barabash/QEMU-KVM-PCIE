@@ -30,6 +30,8 @@
 #include "exec/ram_addr.h"
 #include "tcg/tcg.h"
 
+#include "rr.h"
+
 //#define DEBUG_TLB
 //#define DEBUG_TLB_CHECK
 

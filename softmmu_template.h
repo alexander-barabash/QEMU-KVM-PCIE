@@ -145,7 +145,8 @@
 static inline DATA_TYPE glue(io_read, SUFFIX)(CPUArchState *env,
                                               hwaddr physaddr,
                                               target_ulong addr,
-                                              uintptr_t retaddr)
+                                              uintptr_t retaddr,
+                                              bool *notdirty)
 {
     uint64_t val;
     CPUState *cpu = ENV_GET_CPU(env);
@@ -159,6 +160,7 @@ static inline DATA_TYPE glue(io_read, SUFFIX)(CPUArchState *env,
 
     cpu->mem_io_vaddr = addr;
     io_mem_read(mr, physaddr, &val, 1 << SHIFT);
+    *notdirty = (mr == &io_mem_notdirty);
     return val;
 }
 #endif
@@ -196,6 +198,7 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
     /* Handle an IO access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         hwaddr ioaddr;
+        bool notdirty;
         if ((addr & (DATA_SIZE - 1)) != 0) {
             goto do_unaligned_access;
         }
@@ -203,8 +206,11 @@ WORD_TYPE helper_le_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
 
         /* ??? Note that the io helpers always read data in the target
            byte ordering.  We should push the LE/BE request down into io.  */
-        res = glue(io_read, SUFFIX)(env, ioaddr, addr, retaddr);
+        res = glue(io_read, SUFFIX)(env, ioaddr, addr, retaddr, &notdirty);
         res = TGT_LE(res);
+        if (!notdirty) {
+            glue(rr_read, SUFFIX)(addr, &res);
+        }
         return res;
     }
 
@@ -284,6 +290,7 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
     /* Handle an IO access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         hwaddr ioaddr;
+        bool notdirty;
         if ((addr & (DATA_SIZE - 1)) != 0) {
             goto do_unaligned_access;
         }
@@ -291,8 +298,11 @@ WORD_TYPE helper_be_ld_name(CPUArchState *env, target_ulong addr, int mmu_idx,
 
         /* ??? Note that the io helpers always read data in the target
            byte ordering.  We should push the LE/BE request down into io.  */
-        res = glue(io_read, SUFFIX)(env, ioaddr, addr, retaddr);
+        res = glue(io_read, SUFFIX)(env, ioaddr, addr, retaddr, &notdirty);
         res = TGT_BE(res);
+        if (!notdirty) {
+            glue(rr_read, SUFFIX)(addr, &res);
+        }
         return res;
     }
 
@@ -366,7 +376,8 @@ static inline void glue(io_write, SUFFIX)(CPUArchState *env,
                                           hwaddr physaddr,
                                           DATA_TYPE val,
                                           target_ulong addr,
-                                          uintptr_t retaddr)
+                                          uintptr_t retaddr,
+                                          bool *notdirty)
 {
     CPUState *cpu = ENV_GET_CPU(env);
     MemoryRegion *mr = iotlb_to_region(cpu->as, physaddr);
@@ -379,6 +390,7 @@ static inline void glue(io_write, SUFFIX)(CPUArchState *env,
     cpu->mem_io_vaddr = addr;
     cpu->mem_io_pc = retaddr;
     io_mem_write(mr, physaddr, val, 1 << SHIFT);
+    *notdirty = (mr == &io_mem_notdirty);
 }
 
 void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
@@ -407,7 +419,9 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
 
     /* Handle an IO access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
+        DATA_TYPE rr_val = val;
         hwaddr ioaddr;
+        bool notdirty;
         if ((addr & (DATA_SIZE - 1)) != 0) {
             goto do_unaligned_access;
         }
@@ -416,7 +430,10 @@ void helper_le_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
         /* ??? Note that the io helpers always read data in the target
            byte ordering.  We should push the LE/BE request down into io.  */
         val = TGT_LE(val);
-        glue(io_write, SUFFIX)(env, ioaddr, val, addr, retaddr);
+        glue(io_write, SUFFIX)(env, ioaddr, val, addr, retaddr, &notdirty);
+        if (!notdirty) {
+            glue(rr_write, SUFFIX)(addr, rr_val);
+        }
         return;
     }
 
@@ -485,7 +502,9 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
 
     /* Handle an IO access.  */
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
+        DATA_TYPE rr_val = val;
         hwaddr ioaddr;
+        bool notdirty;
         if ((addr & (DATA_SIZE - 1)) != 0) {
             goto do_unaligned_access;
         }
@@ -494,7 +513,10 @@ void helper_be_st_name(CPUArchState *env, target_ulong addr, DATA_TYPE val,
         /* ??? Note that the io helpers always read data in the target
            byte ordering.  We should push the LE/BE request down into io.  */
         val = TGT_BE(val);
-        glue(io_write, SUFFIX)(env, ioaddr, val, addr, retaddr);
+        glue(io_write, SUFFIX)(env, ioaddr, val, addr, retaddr, &notdirty);
+        if (!notdirty) {
+            glue(rr_write, SUFFIX)(addr, rr_val);
+        }
         return;
     }
 
