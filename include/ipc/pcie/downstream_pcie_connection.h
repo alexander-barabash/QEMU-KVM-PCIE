@@ -78,5 +78,3 @@ void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
 
 void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
                                    PCIDevice *pci_dev);
-
-QEMUTimer *get_ipc_pcie_timer(DownstreamPCIeConnection *connection);

@@ -114,19 +114,69 @@ static void init_threads(void)
 #endif
 }
 
+static void future_queue_timer_callback(void *opaque)
+{
+    IPCConnection *connection = opaque;
+    IPCPacket *packet;
+    uint64_t local_time;
+    uint64_t packet_time;
+
+    while (true) {
+        if (connection->shutdown) {
+            DBGOUT(GENERAL, "Connection shutting down\n");
+            g_queue_clear(connection->future);
+            qemu_system_shutdown_request();
+            return;
+        }
+
+        packet = g_queue_peek_head(connection->future);
+
+        if (!packet) {
+            return;
+        }
+
+        local_time = connection->ops->get_current_time_ns(connection);
+        packet_time = connection->ops->get_ipc_packet_time(connection, packet);
+        if ((packet_time + 1 == 0) ||
+            (packet_time <= local_time)) {
+            g_queue_pop_head(connection->future);
+            connection->packet_handler(packet, connection);
+        } else {
+            timer_mod_ns(connection->future_queue_timer, packet_time);
+            return;
+        }
+    }
+}
+
 static void ipc_bh(void *opaque)
 {
     IPCConnection *connection = opaque;
     IPCPacket *packet = g_async_queue_try_pop(connection->incoming);
     if (connection->shutdown) {
         DBGOUT(GENERAL, "Connection shutting down\n");
+        g_queue_clear(connection->future);
         qemu_system_shutdown_request();
         return;
     }
-    if (packet) {
-        connection->packet_handler(packet, connection);
-        qemu_bh_schedule(connection->bh);        
+    if (!packet) {
+        return;
     }
+    if (g_queue_is_empty(connection->future)) {
+        uint64_t local_time = connection->ops->get_current_time_ns(connection);
+        uint64_t packet_time =
+            connection->ops->get_ipc_packet_time(connection, packet);
+        if ((packet_time + 1 == 0) ||
+            connection->waiting ||
+            (packet_time <= local_time)) {
+            connection->packet_handler(packet, connection);
+        } else {
+            g_queue_push_tail(connection->future, packet);
+            timer_mod_ns(connection->future_queue_timer, packet_time);
+        }
+    } else {
+        g_queue_push_tail(connection->future, packet);
+    }
+    qemu_bh_schedule(connection->bh);
 }
 
 void init_ipc_connection(IPCConnection *connection,
@@ -137,10 +187,15 @@ void init_ipc_connection(IPCConnection *connection,
     init_threads();
     connection->kind = g_strdup(connection_kind);
     connection->incoming = g_async_queue_new();
+    connection->future = g_queue_new();
+    connection->future_queue_timer =
+        timer_new_ns(QEMU_CLOCK_VIRTUAL, future_queue_timer_callback,
+                     connection);
     connection->ipc_sizer = ipc_sizer;
     connection->packet_handler = packet_handler;
     connection->aio_context = qemu_get_aio_context();
     connection->bh = aio_bh_new(connection->aio_context, ipc_bh, connection);
+    connection->waiting = 0;
     connection->shutdown = false;
 }
 
@@ -203,7 +258,9 @@ void register_ipc_connection(const char *socket_path,
 
 void wait_on_ipc_connection(IPCConnection *connection,
                             bool (*wait_function)(void *), void *user_data) {
+    connection->waiting++;
     while (!connection->shutdown && !wait_function(user_data)) {
         aio_poll(connection->aio_context, true);
     }
+    connection->waiting--;
 }

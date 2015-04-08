@@ -36,20 +36,27 @@ IPC_DEBUG_ON(REQUESTS);
 
 static void ipc_timer_callback(void *opaque);
 
-static uint64_t quantum = 1000 * 1000; /* 1 milli second */
+static uint64_t quantum = 1000 * 1000; /* Default: 1 milli second */
+
+static void __attribute__((constructor)) init_ipc_quantum(void)
+{
+    const char *quantum_string = getenv("QEMU_IPC_QUANTUM");
+    char *end;
+    if (!quantum_string) {
+        return;
+    }
+    quantum = strtoll(quantum_string, &end, 0);
+    if (*end) {
+        fprintf(stderr, "Invalid value for QEMU_IPC_QUANTUM: %s\n",
+                quantum_string);
+        exit(1);
+    }   
+}
 
 static inline uint64_t get_current_time_ns(DownstreamPCIeConnection *connection)
 {
     IPCChannel *channel = &connection->connection.channel;
     return channel->ops->get_current_time_ns(channel);
-}
-
-static void rearm_timer(DownstreamPCIeConnection *connection,
-                        uint64_t transaction_time) {
-    IPCChannel *channel = &connection->connection.channel;
-    if ((int64_t)transaction_time != -1) {
-        channel->ops->rearm_timer(channel, transaction_time);
-    }
 }
 
 static void ipc_timer_callback(void *opaque)
@@ -58,15 +65,6 @@ static void ipc_timer_callback(void *opaque)
     DBGOUT(REQUESTS, "ipc_timer_callback at local time %"PRId64"\n",
            get_current_time_ns(connection));
     send_downstream_time_pcie_msg(connection, connection->pci_dev);
-}
-
-QEMUTimer *get_ipc_pcie_timer(DownstreamPCIeConnection *connection)
-{
-    if (connection->timer == NULL) {
-        connection->timer =
-            timer_new_ns(QEMU_CLOCK_VIRTUAL, ipc_timer_callback, connection);
-    }
-    return connection->timer;
 }
 
 static void *ipc_trans_data(void *transaction)
@@ -339,7 +337,6 @@ void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
     PCIeRequest *request;
     uint16_t requester_id = pcie_requester_id(pci_dev);
     uint8_t tag;
-    uint64_t returned_time;
     DBGOUT(REQUESTS, "in send_downstream_time_pcie_msg for device %s at %"PRId64, pci_dev->name,
            get_current_time_ns(connection));
     if (!register_pcie_request(connection->requesters_table,
@@ -361,10 +358,9 @@ void send_downstream_time_pcie_msg(DownstreamPCIeConnection *connection,
     if (connection->connection.shutdown) {
         return;
     }
-    returned_time = ipc_trans_time(request->transaction);
+    DBGOUT(REQUESTS, "send_downstream_time_pcie_msg: returned_time %"PRId64"",
+           ipc_trans_time(request->transaction));
     pcie_request_done(request);
-    DBGOUT(REQUESTS, "send_downstream_time_pcie_msg: returned_time %"PRId64"", returned_time);
-    fprintf(stderr, "send_downstream_time_pcie_msg: returned_time %"PRId64"", returned_time);
 }
 
 void send_special_downstream_pcie_msg(DownstreamPCIeConnection *connection,
@@ -403,7 +399,7 @@ static uint16_t root_completer_id(DownstreamPCIeConnection *connection)
     return (connection->pci_bus_num << 8) | (devfn & 0xFF);
 }
 
-static bool handle_completion(void *transaction, DownstreamPCIeConnection *connection)
+static void handle_completion(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_CompletionDecoded decoded;
     PCIeRequest *request;
@@ -415,9 +411,6 @@ static bool handle_completion(void *transaction, DownstreamPCIeConnection *conne
     request = find_pcie_request(connection->requesters_table,
                                 decoded.requester_id,
                                 decoded.tag);
-    if (!request || !request->is_time_request) {
-        rearm_timer(connection, ipc_trans_time(transaction));
-    }
     if ((request == NULL) || !request->waiting) {
         /* Nobody waits for this. */
         free_data_ipc_trans(transaction);
@@ -425,7 +418,6 @@ static bool handle_completion(void *transaction, DownstreamPCIeConnection *conne
         pcie_request_ready(request, transaction);
         /* NOTE: transaction is now owned by the requester. */
     }
-    return true;
 }
 
 static bool handle_memory_write(PCIE_RequestDecoded *decoded,
@@ -538,41 +530,74 @@ static bool handle_msg_request(PCIE_RequestDecoded *decoded,
     return true;
 }
 
-static bool handle_request(void *transaction, DownstreamPCIeConnection *connection)
+static void handle_request(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_RequestDecoded decoded;
 
     DBGOUT(REQUESTS, "handle_request at time %"PRId64". Local time %"PRId64"\n",
            ipc_trans_time(transaction), get_current_time_ns(connection));
-    rearm_timer(connection, ipc_trans_time(transaction));
 
     decode_request(transaction, &decoded);
     if (decoded.is_memory) {
-        return handle_memory_request(&decoded, connection);
+        handle_memory_request(&decoded, connection);
     } else if (decoded.is_io) {
-        return handle_io_request(&decoded, connection);
+        handle_io_request(&decoded, connection);
     } else if (decoded.is_config) {
-        return handle_config_request(&decoded, connection);
+        handle_config_request(&decoded, connection);
     } else {
-        return handle_msg_request(&decoded, connection);
+        handle_msg_request(&decoded, connection);
     }
+    free_data_ipc_trans(transaction);
 }
 
-static void handle_packet(IPCPacket *packet, IPCConnection *base_connection)
+static void handle_packet(IPCPacket *packet, IPCConnection *ipc_connection)
 {
     uint8_t *transaction = ipc_packet_trans(packet);
-    DownstreamPCIeConnection *connection = (DownstreamPCIeConnection *)base_connection;
+    DownstreamPCIeConnection *connection =
+        downstream_by_ipc_connection(ipc_connection);
+    IPCChannel *channel = &ipc_connection->channel;
+    uint64_t transaction_time =
+        ipc_connection->ops->get_ipc_packet_time(ipc_connection, packet);
+
+    if (transaction_time + 1 != 0) {
+        channel->ops->rearm_timer(channel, transaction_time);
+    }
+
+    if (!ipc_connection->waiting) {
+        // need wait
+    }
+
     if (pcie_trans_is_completion(transaction)) {
         handle_completion(transaction, connection);
     } else {
         handle_request(transaction, connection);
-        free(packet);
     }
 }
 
+static uint64_t
+get_ipc_packet_time(IPCConnection *connection, IPCPacket *packet)
+{
+    uint8_t *transaction = ipc_packet_trans(packet);
+    return ipc_trans_time(transaction);
+}
+
+static uint64_t
+ipc_connection_get_current_time_ns(IPCConnection *connection)
+{
+    return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+}
+
+static struct IPCConnectionOps ipc_connection_ops = {
+    .get_current_time_ns = ipc_connection_get_current_time_ns,
+    .get_ipc_packet_time = get_ipc_packet_time,
+};
+
 static DownstreamPCIeConnection *create_connection(void)
 {
-    return (DownstreamPCIeConnection *)g_malloc0(sizeof(DownstreamPCIeConnection));
+    DownstreamPCIeConnection *connection =
+        (DownstreamPCIeConnection *)g_malloc0(sizeof(DownstreamPCIeConnection));
+    connection->connection.ops = &ipc_connection_ops;
+    return connection;
 }
 
 static const char *ipc_connection_kind = "pcie_downstream";
@@ -606,9 +631,15 @@ static void ipc_channel_rearm_timer(IPCChannel *channel, uint64_t transaction_ti
     uint64_t local_time = channel->ops->get_current_time_ns(channel);
     uint64_t target_time = transaction_time + quantum;
 
-    if (local_time < target_time) {
-        timer_mod_ns(get_ipc_pcie_timer(connection), target_time);
+    if (connection->timer == NULL) {
+        connection->timer =
+            timer_new_ns(QEMU_CLOCK_VIRTUAL, ipc_timer_callback, connection);
     }
+
+    if (local_time >= target_time) {
+        target_time = local_time + quantum;
+    }
+    timer_mod_ns(connection->timer, target_time);
 }
 
 static IPCChannelOps ipc_channel_ops = {
@@ -621,11 +652,12 @@ static DownstreamPCIeConnection *get_connection(const char *socket_path,
                                                 PCIDevice *pci_dev)
 {
     bool error;
-    IPCConnection *base_connection = find_ipc_connection(ipc_connection_kind,
-                                                         socket_path,
-                                                         use_abstract_path,
-                                                         &error);
-    DownstreamPCIeConnection *connection = (DownstreamPCIeConnection *)base_connection;
+    IPCConnection *ipc_connection = find_ipc_connection(ipc_connection_kind,
+                                                        socket_path,
+                                                        use_abstract_path,
+                                                        &error);
+    DownstreamPCIeConnection *connection =
+        downstream_by_ipc_connection(ipc_connection);
     if (connection == NULL) {
         if (error) {
             return NULL;

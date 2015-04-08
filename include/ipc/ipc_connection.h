@@ -33,15 +33,24 @@ typedef struct IPCPacket IPCPacket;
 
 typedef void (*IPCPacketHandler)(IPCPacket *packet, IPCConnection *connection);
 
+struct IPCConnectionOps {
+    uint64_t (*get_current_time_ns)(IPCConnection *connection);
+    uint64_t (*get_ipc_packet_time)(IPCConnection *connection, IPCPacket *packet);
+};
+
 struct IPCConnection {
     IPCChannel channel;
     char *kind;
     GAsyncQueue *incoming;
+    GQueue *future;
+    QEMUTimer *future_queue_timer;
     IPCSizer *ipc_sizer;
     AioContext *aio_context;
     QEMUBH *bh;
     IPCPacketHandler packet_handler;
+    unsigned waiting;
     bool shutdown;
+    struct IPCConnectionOps *ops;
 };
 
 struct IPCPacket {
