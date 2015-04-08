@@ -44,7 +44,9 @@ send_ipc_pcie_transaction_header(IPCChannel *channel,
     if (send_ipc_pcie_transaction_header_with_time(channel,
                                                    trans_data,
                                                    time)) {
-        channel->ops->rearm_timer(channel, time);
+        if (time + 1 != 0) {
+            channel->ops->rearm_timer(channel, time);
+        }
         return true;
     } else {
         return false;
