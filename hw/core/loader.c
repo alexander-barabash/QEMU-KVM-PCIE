@@ -51,6 +51,7 @@
 #include "hw/nvram/fw_cfg.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
+#include "trace.h"
 
 #include <zlib.h>
 
@@ -774,6 +775,8 @@ void *rom_add_blob(const char *name, const void *blob, size_t len,
 {
     Rom *rom;
     void *data = NULL;
+
+    trace_rom_add_blob(name, len, addr, fw_file_name);
 
     rom           = g_malloc0(sizeof(*rom));
     rom->name     = g_strdup(name);
