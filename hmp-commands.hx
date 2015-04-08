@@ -24,6 +24,20 @@ Show the help for all commands or just for command @var{cmd}.
 ETEXI
 
     {
+        .name       = "vm-clock",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show VM clock value",
+        .mhandler.cmd = hmp_vm_clock,
+    },
+
+STEXI
+@item vm-clock
+@findex vm-clock
+Show VM clock in nanoseconds.
+ETEXI
+
+    {
         .name       = "commit",
         .args_type  = "device:B",
         .params     = "device|all",

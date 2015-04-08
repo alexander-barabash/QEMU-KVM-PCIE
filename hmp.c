@@ -746,6 +746,24 @@ void hmp_system_powerdown(Monitor *mon, const QDict *qdict)
     qmp_system_powerdown(NULL);
 }
 
+void hmp_vm_clock(Monitor *mon, const QDict *qdict)
+{
+    int64_t ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    int64_t sec = ns / 1000000000;
+    int64_t ms, us;
+    ns -= sec * 1000000000;
+    ms = ns / 1000000;
+    ns -= ms * 1000000;
+    us = ns / 1000;
+    ns -= us * 1000;    
+    monitor_printf(mon,
+                   "%"PRId64" sec "
+                   "%3.3"PRId64" ms "
+                   "%3.3"PRId64" us "
+                   "%3.3"PRId64" ns\n",
+                   sec, ms, us, ns);
+}
+
 void hmp_cpu(Monitor *mon, const QDict *qdict)
 {
     int64_t cpu_index;

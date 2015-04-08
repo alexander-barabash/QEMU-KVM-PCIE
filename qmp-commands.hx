@@ -3754,3 +3754,24 @@ Example:
 <- { "return": {} }
 
 EQMP
+    {
+        .name       = "vm-clock",
+        .args_type  = "",
+        .mhandler.cmd_new = qmp_marshal_input_vm_clock,
+    },
+
+SQMP
+vm-clock
+------------------------
+
+Show current value of VM clock
+
+returns a json-object with the following information:
+- "clock" : json-int
+
+Example:
+
+-> { "execute": "vm-clock" }
+<- { "return": 67108864 }
+
+EQMP
