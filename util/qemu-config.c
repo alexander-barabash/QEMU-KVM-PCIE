@@ -321,7 +321,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             struct stat sb;
             ppscope_open = true;
             ppmutable = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = (lstat(ppmutable, &sb) == 0) && S_ISREG(sb.st_mode);
+            ppscope_active = (stat(ppmutable, &sb) == 0) && S_ISREG(sb.st_mode);
             if (ppmutable != ppstring) {
                 g_free(ppmutable);
             }
@@ -329,7 +329,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             struct stat sb;
             ppscope_open = true;
             ppmutable = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = (lstat(ppmutable, &sb) == 0) && S_ISDIR(sb.st_mode);
+            ppscope_active = (stat(ppmutable, &sb) == 0) && S_ISDIR(sb.st_mode);
             if (ppmutable != ppstring) {
                 g_free(ppmutable);
             }
