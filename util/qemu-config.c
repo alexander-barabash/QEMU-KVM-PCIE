@@ -420,6 +420,14 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             }
             continue;
         }
+        if (sscanf(line, "#show \"%1023[^\"]\"", value)) {
+            ppmutable = qemu_substitute_env_in_string(value);
+            printf("%s\n", ppmutable);
+            if (ppmutable != value) {
+                g_free(ppmutable);
+            }
+            continue;
+        }
         if (line[0] == '#') {
             /* comment */
             continue;
