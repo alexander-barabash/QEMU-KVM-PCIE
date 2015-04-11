@@ -561,7 +561,7 @@ static QemuOptsList qemu_icount_opts = {
 };
 
 static QemuOptsList qemu_rr_deterministic_opts = {
-    .name = "rr_deterministic",
+    .name = "rr",
     .implied_opt_name = "file",
     .merge_lists = true,
     .head = QTAILQ_HEAD_INITIALIZER(qemu_rr_deterministic_opts.head),
@@ -3934,11 +3934,11 @@ int main(int argc, char **argv, char **envp)
                     const char *old_file;
                     const char *new_file;
                     rr_deterministic_opts =
-                        qemu_find_opts_singleton("rr_deterministic");
+                        qemu_find_opts_singleton("rr");
                     old_file = qemu_opt_get(rr_deterministic_opts, "file");
                     if (optarg) {
                         rr_deterministic_opts =
-                            qemu_opts_parse(qemu_find_opts("rr_deterministic"),
+                            qemu_opts_parse(qemu_find_opts("rr"),
                                             optarg, 1);
                     }
                     if (!rr_deterministic_opts) {
@@ -3964,10 +3964,10 @@ int main(int argc, char **argv, char **envp)
                     const char *filekey = (popt->index == QEMU_OPTION_record) ?
                         "recordfile" : "replayfile";
                     rr_deterministic_opts =
-                        qemu_find_opts_singleton("rr_deterministic");
+                        qemu_find_opts_singleton("rr");
                     old_file = qemu_opt_get(rr_deterministic_opts, "file");
                     rr_deterministic_opts =
-                        qemu_opts_parse(qemu_find_opts("rr_deterministic"),
+                        qemu_opts_parse(qemu_find_opts("rr"),
                                         optarg, 1);
                     if (!rr_deterministic_opts) {
                         exit(1);
@@ -4161,7 +4161,7 @@ int main(int argc, char **argv, char **envp)
     configure_icount(icount_opts, &error_abort);
     qemu_opts_del(icount_opts);
 
-    configure_rr_deterministic(qemu_find_opts_singleton("rr_deterministic"),
+    configure_rr_deterministic(qemu_find_opts_singleton("rr"),
                                &error_abort);
 
     current_machine = MACHINE(object_new(object_class_get_name(
