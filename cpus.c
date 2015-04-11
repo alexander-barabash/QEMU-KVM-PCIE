@@ -979,7 +979,6 @@ static void configure_rr_replay(QemuOpts *opts)
 
 void configure_rr_deterministic(QemuOpts *opts, Error **errp)
 {
-    fprintf(stderr, "configure_rr_deterministic\n");
     rr_deterministic =
         qemu_opt_get_bool(opts, "deterministic", false) ||
         qemu_opt_get(opts, "recordfile") ||
