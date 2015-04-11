@@ -299,11 +299,125 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
     QemuOpts *opts = NULL;
     int res = -1, lno = 0;
 
+    bool ppscope_open, ppscope_active;
+    char ppstring[64];
+    bool ppscopes[64];
+    int ppscope_index = 0;
+    const char *ppvalue;
+    char *ppmutable;
+    char *ppmutable2;
+
+    ppscopes[ppscope_index] = true;
+
     loc_push_none(&loc);
     while (fgets(line, sizeof(line), fp) != NULL) {
         loc_set_file(fname, ++lno);
         if (line[0] == '\n') {
             /* skip empty lines */
+            continue;
+        }
+
+        if (sscanf(line, "#iffile \"%63[^\"]\"", ppstring)) {
+            struct stat sb;
+            ppscope_open = true;
+            ppmutable = qemu_substitute_env_in_string(ppstring);
+            ppscope_active = (lstat(ppmutable, &sb) == 0) && S_ISREG(sb.st_mode);
+            if (ppmutable != ppstring) {
+                g_free(ppmutable);
+            }
+        } else if (sscanf(line, "#ifdir \"%63[^\"]\"", ppstring)) {
+            struct stat sb;
+            ppscope_open = true;
+            ppmutable = qemu_substitute_env_in_string(ppstring);
+            ppscope_active = (lstat(ppmutable, &sb) == 0) && S_ISDIR(sb.st_mode);
+            if (ppmutable != ppstring) {
+                g_free(ppmutable);
+            }
+        } else if (sscanf(line, "#ifdef %63s", ppstring)) {
+            ppscope_open = true;
+            ppvalue = getenv(ppstring);
+            ppscope_active = ppvalue && *ppvalue;
+        } else if (sscanf(line, "#ifndef %63s", ppstring)) {
+            ppscope_open = true;
+            ppvalue = getenv(ppstring);
+            ppscope_active = !(ppvalue && *ppvalue);
+        } else if ((sscanf(line, "#if \"%63[^\"=]==%1023[^\"]\"",
+                           ppstring, value) == 2) ||
+                   (sscanf(line, "#if \"%63[^\"=]=%1023[^\"]\"",
+                           ppstring, value) == 2)) {
+            ppscope_open = true;
+            ppmutable = qemu_substitute_env_in_string(value);
+            ppmutable2 = qemu_substitute_env_in_string(ppstring);
+            ppscope_active = !strcmp(ppmutable2, ppmutable);
+            if (ppmutable != value) {
+                g_free(ppmutable);
+            }
+            if (ppmutable2 != ppstring) {
+                g_free(ppmutable2);
+            }
+        } else if (sscanf(line, "#if \"%63[^\"!=]!=%1023[^\"]\"",
+                          ppstring, value) == 2) {
+            ppscope_open = true;
+            ppmutable = qemu_substitute_env_in_string(value);
+            ppmutable2 = qemu_substitute_env_in_string(ppstring);
+            ppscope_active = (strcmp(ppmutable2, ppmutable) != 0);
+            if (ppmutable != value) {
+                g_free(ppmutable);
+            }
+            if (ppmutable2 != ppstring) {
+                g_free(ppmutable2);
+            }
+        } else {
+            ppscope_open = false;
+        }
+
+        if (ppscope_open) {
+            ppscope_index++;
+            if (ppscope_index >= 64) {
+                error_report("Too many preprocessor levels");
+                goto out;
+            }
+            if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
+                ppscopes[ppscope_index] = false;
+            } else {
+                ppscopes[ppscope_index] = ppscope_active;
+            }
+            continue;
+        }
+
+        if (strncmp(line, "#else", sizeof("#else") - 1) == 0) {
+            /* change preprocessor scope */
+            if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
+                ppscopes[ppscope_index] = false;
+            } else {
+                ppscopes[ppscope_index] = !ppscopes[ppscope_index];
+            }
+            continue;
+        }
+        if (strncmp(line, "#endif", sizeof("#endif") - 1) == 0) {
+            /* close preprocessor scope */
+            if (ppscope_index < 1) {
+                error_report("Too many #endif-s");
+                goto out;
+            }
+            ppscope_index--;
+            continue;
+        }
+        if (!ppscopes[ppscope_index]) {
+            continue;
+        }
+        if (sscanf(line, "#putenv \"%1022[^\"]\"", value)) {
+            if (!strchr(value, '=')) {
+                size_t l = strlen(value);
+                value[l + 1] = 0;
+                value[l] = '=';
+            }
+            ppmutable = qemu_substitute_env_in_string(value);
+            if (ppmutable == value) {
+                putenv(g_strdup(value));
+            } else {
+                putenv(ppmutable);
+            }
             continue;
         }
         if (line[0] == '#') {
