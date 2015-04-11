@@ -480,7 +480,7 @@ uint64_t qemu_opt_get_size_del(QemuOpts *opts, const char *name,
  * If any substitution occurs, returns a new string.
  * Otherwise, returns the original string.
  */
-static char *qemu_substitute_env(char *str, size_t len)
+char *qemu_substitute_env(char *str, size_t len)
 {
     char *var_start, *var_end, *var, *var_value, *head, *tail, *result;
     ssize_t head_len, var_len, tail_len;
@@ -514,10 +514,15 @@ static char *qemu_substitute_env(char *str, size_t len)
     if (head != NULL) {
         g_free(head);
     }
-    if (tail != NULL) {
+    if ((tail != NULL) && (tail != var_end + 1)) {
         g_free(tail);
     }
     return result;
+}
+
+char *qemu_substitute_env_in_string(char *str)
+{
+    return qemu_substitute_env(str, strlen(str));
 }
 
 static void qemu_opt_parse(QemuOpt *opt, Error **errp)
@@ -526,7 +531,7 @@ static void qemu_opt_parse(QemuOpt *opt, Error **errp)
         return;
 
     if (opt->str != NULL) {
-        char *substituted = qemu_substitute_env(opt->str, strlen(opt->str));
+        char *substituted = qemu_substitute_env_in_string(opt->str);
         if (substituted != opt->str) {
             g_free(opt->str);
             opt->str = substituted;

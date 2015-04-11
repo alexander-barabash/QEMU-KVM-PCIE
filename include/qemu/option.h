@@ -131,4 +131,11 @@ void qemu_opts_print_help(QemuOptsList *list);
 void qemu_opts_free(QemuOptsList *list);
 QemuOptsList *qemu_opts_append(QemuOptsList *dst, QemuOptsList *list);
 
+/*
+ * If any substitution occurs, returns a new string.
+ * Otherwise, returns the original string.
+ */
+char *qemu_substitute_env(char *str, size_t len);
+char *qemu_substitute_env_in_string(char *str);
+
 #endif
