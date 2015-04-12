@@ -299,15 +299,8 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
     QemuOpts *opts = NULL;
     int res = -1, lno = 0;
 
-    bool ppscope_open, ppscope_active;
-    char ppstring[64];
-    bool ppscopes[64];
+    bool ppscopes[64] = {true};
     int ppscope_index = 0;
-    const char *ppvalue;
-    char *ppmutable;
-    char *ppmutable2;
-
-    ppscopes[ppscope_index] = true;
 
     loc_push_none(&loc);
     while (fgets(line, sizeof(line), fp) != NULL) {
@@ -317,115 +310,148 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             continue;
         }
 
-        if (sscanf(line, "#iffile \"%63[^\"]\"", ppstring)) {
-            struct stat sb;
-            ppscope_open = true;
-            ppmutable = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = (stat(ppmutable, &sb) == 0) && S_ISREG(sb.st_mode);
-            if (ppmutable != ppstring) {
-                g_free(ppmutable);
+        {
+            bool ppscope_open = false;
+            bool pphandled = true;
+            bool pperror = false;
+            char *ppmutable = NULL;
+            char *ppmutable1 = NULL;
+            char *substituted = NULL;
+            char *substituted1 = NULL;
+            bool ppscope_active = ppscopes[ppscope_index];
+            if (sscanf(line, " ! iffile \"%m[^\"]\"", &ppmutable)) {
+                struct stat sb;
+                ppscope_open = true;
+                substituted = qemu_substitute_env_in_string(ppmutable);
+                ppscope_active = ppscope_active &&
+                    (stat(substituted, &sb) == 0) && S_ISREG(sb.st_mode);
+            } else if (sscanf(line, " ! ifdir \"%m[^\"]\"", &ppmutable)) {
+                struct stat sb;
+                ppscope_open = true;
+                substituted = qemu_substitute_env_in_string(ppmutable);
+                if (ppscope_active) {
+                    ppscope_active =
+                        (stat(substituted, &sb) == 0) && S_ISDIR(sb.st_mode);
+                }
+            } else if (sscanf(line, " ! ifdef %ms", &ppmutable)) {
+                ppscope_open = true;
+                if (ppscope_active) {
+                    const char *ppvalue = getenv(ppmutable);
+                    ppscope_active = ppvalue && *ppvalue;
+                }
+            } else if (sscanf(line, " ! ifndef %ms", &ppmutable)) {
+                ppscope_open = true;
+                if (ppscope_active) {
+                    const char *ppvalue = getenv(ppmutable);
+                    ppscope_active = !(ppvalue && *ppvalue);
+                }
+            } else if (sscanf(line, " ! if \" %m[^\"=] == %m[^\"] \"",
+                              &ppmutable, &ppmutable1)) {
+                if (ppmutable1) {
+                    ppscope_open = true;
+                    if (ppscope_active) {
+                        substituted = qemu_substitute_env_in_string(ppmutable);
+                        substituted1 = qemu_substitute_env_in_string(ppmutable1);
+                        ppscope_active = !strcmp(substituted, substituted1);
+                    }
+                } else if (sscanf(line, " ! if \" %m[^\"=] == \"",
+                                  &ppmutable1)) {
+                    ppscope_open = true;
+                    if (ppscope_active) {
+                        substituted = qemu_substitute_env_in_string(ppmutable);
+                        ppscope_active = !*substituted;
+                    }
+                } else {
+                    error_report("Wrong syntax for !if");
+                    pperror = true;
+                }
+            } else if (sscanf(line, " ! if \" %m[^\"!=] != %m[^\"] \"",
+                              &ppmutable, &ppmutable1)) {
+                if (ppmutable1) {
+                    ppscope_open = true;
+                    if (ppscope_active) {
+                        substituted = qemu_substitute_env_in_string(ppmutable);
+                        substituted1 = qemu_substitute_env_in_string(ppmutable1);
+                        ppscope_active = !!strcmp(substituted, substituted1);
+                    }
+                } else if (sscanf(line, " ! if \" %m[^\"!=] != \"",
+                                  &ppmutable1)) {
+                    ppscope_open = true;
+                    if (ppscope_active) {
+                        substituted = qemu_substitute_env_in_string(ppmutable);
+                        ppscope_active = !!*substituted;
+                    }
+                } else {
+                    error_report("Wrong syntax for !if");
+                    pperror = true;
+                }
+            } else if (sscanf(line, " ! %5[else] ", value) &&
+                       !strcmp(value, "else")) {
+                /* change preprocessor scope */
+                if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
+                    ppscopes[ppscope_index] = false;
+                } else {
+                    ppscopes[ppscope_index] = !ppscopes[ppscope_index];
+                }
+            } else if (sscanf(line, " ! %6[endif] ", value) &&
+                       !strcmp(value, "endif")) {
+                /* close preprocessor scope */
+                if (ppscope_index > 0) {
+                    ppscope_index--;
+                } else {
+                    error_report("Too many !endif-s");
+                    pperror = true;
+                }
+            } else if (sscanf(line, " ! putenv \"%m[^\"]\"", &ppmutable)) {
+                if (ppscope_active) {
+                    substituted = qemu_substitute_env_in_string(ppmutable);
+                    if (strchr(substituted, '=')) {
+                        if (ppmutable == substituted) {
+                            putenv(g_strdup(substituted));
+                        } else {
+                            putenv(substituted);
+                        }
+                        substituted = NULL;
+                    } else {
+                        error_report("Missing assignment '=' in !putenv");
+                        pperror = true;
+                    }
+                }
+            } else if (sscanf(line, " ! show \"%m[^\"]\"", &ppmutable)) {
+                if (ppscope_active) {
+                    substituted = qemu_substitute_env_in_string(ppmutable);
+                    printf("%s\n", substituted);
+                }
+            } else {
+                pphandled = false;
             }
-        } else if (sscanf(line, "#ifdir \"%63[^\"]\"", ppstring)) {
-            struct stat sb;
-            ppscope_open = true;
-            ppmutable = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = (stat(ppmutable, &sb) == 0) && S_ISDIR(sb.st_mode);
-            if (ppmutable != ppstring) {
-                g_free(ppmutable);
-            }
-        } else if (sscanf(line, "#ifdef %63s", ppstring)) {
-            ppscope_open = true;
-            ppvalue = getenv(ppstring);
-            ppscope_active = ppvalue && *ppvalue;
-        } else if (sscanf(line, "#ifndef %63s", ppstring)) {
-            ppscope_open = true;
-            ppvalue = getenv(ppstring);
-            ppscope_active = !(ppvalue && *ppvalue);
-        } else if ((sscanf(line, "#if \"%63[^\"=]==%1023[^\"]\"",
-                           ppstring, value) == 2) ||
-                   (sscanf(line, "#if \"%63[^\"=]=%1023[^\"]\"",
-                           ppstring, value) == 2)) {
-            ppscope_open = true;
-            ppmutable = qemu_substitute_env_in_string(value);
-            ppmutable2 = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = !strcmp(ppmutable2, ppmutable);
-            if (ppmutable != value) {
-                g_free(ppmutable);
-            }
-            if (ppmutable2 != ppstring) {
-                g_free(ppmutable2);
-            }
-        } else if (sscanf(line, "#if \"%63[^\"!=]!=%1023[^\"]\"",
-                          ppstring, value) == 2) {
-            ppscope_open = true;
-            ppmutable = qemu_substitute_env_in_string(value);
-            ppmutable2 = qemu_substitute_env_in_string(ppstring);
-            ppscope_active = (strcmp(ppmutable2, ppmutable) != 0);
-            if (ppmutable != value) {
-                g_free(ppmutable);
-            }
-            if (ppmutable2 != ppstring) {
-                g_free(ppmutable2);
-            }
-        } else {
-            ppscope_open = false;
-        }
 
-        if (ppscope_open) {
-            ppscope_index++;
-            if (ppscope_index >= 64) {
-                error_report("Too many preprocessor levels");
+            if (substituted != ppmutable) {
+                g_free(substituted);
+            }
+            if (substituted1 != ppmutable1) {
+                g_free(substituted1);
+            }
+            g_free(ppmutable);
+            g_free(ppmutable1);
+
+            if (ppscope_open) {
+                ppscope_index++;
+                if (ppscope_index < 64) {
+                    ppscopes[ppscope_index] = ppscope_active;
+                } else {
+                    error_report("Too many preprocessor levels");
+                    pperror = true;
+                }
+            }
+            if (pperror) {
                 goto out;
             }
-            if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
-                ppscopes[ppscope_index] = false;
-            } else {
-                ppscopes[ppscope_index] = ppscope_active;
+            if (pphandled) {
+                continue;
             }
-            continue;
-        }
-
-        if (strncmp(line, "#else", sizeof("#else") - 1) == 0) {
-            /* change preprocessor scope */
-            if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
-                ppscopes[ppscope_index] = false;
-            } else {
-                ppscopes[ppscope_index] = !ppscopes[ppscope_index];
-            }
-            continue;
-        }
-        if (strncmp(line, "#endif", sizeof("#endif") - 1) == 0) {
-            /* close preprocessor scope */
-            if (ppscope_index < 1) {
-                error_report("Too many #endif-s");
-                goto out;
-            }
-            ppscope_index--;
-            continue;
         }
         if (!ppscopes[ppscope_index]) {
-            continue;
-        }
-        if (sscanf(line, "#putenv \"%1022[^\"]\"", value)) {
-            if (!strchr(value, '=')) {
-                size_t l = strlen(value);
-                value[l + 1] = 0;
-                value[l] = '=';
-            }
-            ppmutable = qemu_substitute_env_in_string(value);
-            if (ppmutable == value) {
-                putenv(g_strdup(value));
-            } else {
-                putenv(ppmutable);
-            }
-            continue;
-        }
-        if (sscanf(line, "#show \"%1023[^\"]\"", value)) {
-            ppmutable = qemu_substitute_env_in_string(value);
-            printf("%s\n", ppmutable);
-            if (ppmutable != value) {
-                g_free(ppmutable);
-            }
             continue;
         }
         if (line[0] == '#') {
