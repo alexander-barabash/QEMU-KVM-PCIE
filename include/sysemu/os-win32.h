@@ -96,6 +96,7 @@ size_t getpagesize(void);
 #endif
 
 int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
 
 typedef struct {
     long tv_sec;
