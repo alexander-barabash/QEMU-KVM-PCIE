@@ -936,13 +936,21 @@ void configure_icount(QemuOpts *opts, Error **errp)
                    get_ticks_per_sec() / 10);
 }
 
-static void configure_icount_default(Error **errp)
+static void configure_icount_rr(const char *mips, Error **errp)
 {
-    QemuOptsList *icount_opts_list = qemu_find_opts("icount");
-    QemuOpts *icount_opts = qemu_opts_parse(icount_opts_list, "auto", 1);
+    QemuOpts *icount_opts = qemu_find_opts_singleton("icount");
+    if (!mips || !*mips) {
+        mips = "1024";
+    }
+    if (qemu_opt_set(icount_opts, "mips", mips) < 0) {
+        fprintf(stderr,
+                "Cannot configure icount for deterministic execution.\n");
+        exit(1);
+    }
     configure_icount(icount_opts, errp);
     if (!use_icount) {
-        fprintf(stderr, "Cannot configure icount.\n");
+        fprintf(stderr,
+                "Cannot configure icount for deterministic execution.\n");
         exit(1);
     }
 }
@@ -988,15 +996,13 @@ void configure_rr_deterministic(QemuOpts *opts, Error **errp)
         return;
     }
 
-    if (kvm_enabled() || xen_enabled()) {
+    if (kvm_enabled() || xen_enabled() || use_icount) {
         fprintf(stderr,
-                "Deterministic execution is not supported with kvm or xen\n");
+                "Deterministic execution is not supported with kvm, xen or icount\n");
         exit(1);
     }
 
-    if (!use_icount) {
-        configure_icount_default(errp);
-    }
+    configure_icount_rr(qemu_opt_get(opts, "mips"), errp);
 
     if (use_icount != 1) {
         fprintf(stderr,
