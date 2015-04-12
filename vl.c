@@ -579,9 +579,6 @@ static QemuOptsList qemu_rr_deterministic_opts = {
             .name = "replayfile",
             .type = QEMU_OPT_STRING,
         }, {
-            .name = "shift",
-            .type = QEMU_OPT_STRING,
-        }, {
             .name = "mips",
             .type = QEMU_OPT_STRING,
         },
