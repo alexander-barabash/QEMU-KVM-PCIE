@@ -586,6 +586,20 @@ static QemuOptsList qemu_rr_deterministic_opts = {
     },
 };
 
+static QemuOptsList qemu_snapshot_opts = {
+    .name = "snapshot",
+    .implied_opt_name = "snapshot",
+    .merge_lists = true,
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_snapshot_opts.head),
+    .desc = {
+        {
+            .name = "snapshot",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end of list */ }
+    },
+};
+
 /**
  * Get machine options
  *
@@ -2963,6 +2977,11 @@ out:
     return 0;
 }
 
+static void process_snapshot_opts(QemuOpts *opts, int *p_snapshot)
+{
+    *p_snapshot = qemu_opt_get_bool(opts, "snapshot", false) ? 1 : 0;
+}
+
 static void process_machine_opts(QemuOpts *opts, MachineClass **p_machine_class)
 {
     const char *machine_type = qemu_opt_get(opts, "type");
@@ -3150,6 +3169,7 @@ int main(int argc, char **argv, char **envp)
     qemu_add_opts(&qemu_numa_opts);
     qemu_add_opts(&qemu_icount_opts);
     qemu_add_opts(&qemu_rr_deterministic_opts);
+    qemu_add_opts(&qemu_snapshot_opts);
 
     runstate_init();
 
@@ -3282,7 +3302,10 @@ int main(int argc, char **argv, char **envp)
                 drive_add(IF_PFLASH, -1, optarg, PFLASH_OPTS);
                 break;
             case QEMU_OPTION_snapshot:
-                snapshot = 1;
+                opts = qemu_opts_parse(qemu_find_opts("snapshot"), "snapshot=on", 0);
+                if (!opts) {
+                    exit(1);
+                }
                 break;
             case QEMU_OPTION_hdachs:
                 {
@@ -4153,6 +4176,8 @@ int main(int argc, char **argv, char **envp)
                 "Use -machine help to list supported machines!\n");
         exit(1);
     }
+
+    process_snapshot_opts(qemu_find_opts_singleton("snapshot"), &snapshot);
 
     icount_opts = qemu_find_opts_singleton("icount");
     configure_icount(icount_opts, &error_abort);
