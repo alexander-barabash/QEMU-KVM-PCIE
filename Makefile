@@ -398,7 +398,7 @@ install-sysconfig: install-datadir install-confdir
 	$(INSTALL_DATA) $(SRC_PATH)/sysconfigs/target/target-x86_64.conf "$(DESTDIR)$(qemu_confdir)"
 
 install: all $(if $(BUILD_DOCS),install-doc) install-sysconfig \
-install-datadir install-localstatedir install-compatibility
+install-datadir install-localstatedir install-compatibility install-qemu-runner
 	$(INSTALL_DIR) "$(DESTDIR)$(bindir)"
 ifneq ($(TOOLS),)
 	$(call install-prog,$(TOOLS),$(DESTDIR)$(bindir))
@@ -505,6 +505,17 @@ pdf: qemu-doc.pdf qemu-tech.pdf
 qemu-doc.dvi qemu-doc.html qemu-doc.info qemu-doc.pdf: \
 	qemu-img.texi qemu-nbd.texi qemu-options.texi \
 	qemu-monitor.texi qemu-img-cmds.texi
+
+ifndef CONFIG_WIN32
+install-qemu-runner:
+	$(INSTALL_DIR) "$(DESTDIR)$(prefix)"
+	set -e; for d in $(TARGET_DIRS); do \
+		$(INSTALL_PROG) run-qemu.sh \
+		$(DESTDIR)$(prefix)/`echo $$d | sed 's/^\(.*\)-softmmu/run-qemu-system-\1/'`; \
+	done
+else
+install-qemu-runner:
+endif
 
 ifdef CONFIG_WIN32
 
