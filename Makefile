@@ -509,9 +509,10 @@ qemu-doc.dvi qemu-doc.html qemu-doc.info qemu-doc.pdf: \
 ifndef CONFIG_WIN32
 install-qemu-runner:
 	$(INSTALL_DIR) "$(DESTDIR)$(prefix)"
+	$(INSTALL_PROG) run-qemu-arch.sh "$(DESTDIR)$(prefix)/run-qemu-arch.sh"
 	set -e; for d in $(TARGET_DIRS); do \
 		$(INSTALL_PROG) run-qemu.sh \
-		$(DESTDIR)$(prefix)/`echo $$d | sed 's/^\(.*\)-softmmu/run-qemu-system-\1/'`; \
+		"$(DESTDIR)$(prefix)/`echo $$d | sed 's/^\(.*\)-softmmu/run-qemu-system-\1/'`"; \
 	done
 else
 install-qemu-runner:
