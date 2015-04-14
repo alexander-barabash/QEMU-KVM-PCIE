@@ -405,7 +405,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
                     error_report("Too many !endif-s");
                     pperror = true;
                 }
-            } else if (sscanf(line, " ! setenv %ms \"%m[^\"]\"",
+            } else if (sscanf(line, " ! define %ms \"%m[^\"]\"",
                               &ppstring, &ppstring1)) {
                 if (ppstring1) {
                     if (ppscope_active) {
@@ -417,7 +417,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
                     error_report("Missing value for setenv");
                     pperror = true;
                 }
-            } else if (sscanf(line, " ! unsetenv %ms", &ppstring)) {
+            } else if (sscanf(line, " ! undef %ms", &ppstring)) {
                 if (ppscope_active) {
                     substituted = qemu_substitute_env_in_string(ppstring);
                     unsetenv(substituted);
@@ -505,6 +505,9 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
     }
     res = 0;
 out:
+    unsetenv("_CONFIG_FILE_DIRNAME");
+    unsetenv("_CONFIG_FILE_BASENAME");
+
     loc_pop(&loc);
     return res;
 }
