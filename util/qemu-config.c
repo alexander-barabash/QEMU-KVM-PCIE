@@ -313,7 +313,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             continue;
         }
 
-        {
+        if (sscanf(line, " %1[!] ", value)) {
             bool ppscope_open = false;
             bool pphandled = true;
             bool pperror = false;
@@ -388,7 +388,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
                     error_report("Wrong syntax for !if");
                     pperror = true;
                 }
-            } else if (sscanf(line, " ! %5[else] ", value) &&
+            } else if (sscanf(line, " ! %4[else] ", value) &&
                        !strcmp(value, "else")) {
                 /* change preprocessor scope */
                 if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
@@ -396,7 +396,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
                 } else {
                     ppscopes[ppscope_index] = !ppscopes[ppscope_index];
                 }
-            } else if (sscanf(line, " ! %6[endif] ", value) &&
+            } else if (sscanf(line, " ! %5[endif] ", value) &&
                        !strcmp(value, "endif")) {
                 /* close preprocessor scope */
                 if (ppscope_index > 0) {
