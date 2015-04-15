@@ -96,6 +96,11 @@ static inline uint64_t ipc_trans_time(void *transaction)
     return time;
 }
 
+static inline uint64_t pcie_request_time(PCIeRequest *request)
+{
+    return ipc_trans_time(request->transaction);
+}
+
 static inline void pcie_request_done(PCIeRequest *request) {
     if (request->transaction) {
         free_data_ipc_trans(request->transaction);
@@ -116,8 +121,9 @@ void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         uint64_t val;
     } data;
     data.val = val;
-    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%llX := 0x%llX", size,
-           (unsigned long long)addr, (unsigned long long)data.val);
+    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%llX := 0x%llX at time %"PRId64"",
+           size, (unsigned long long)addr, (unsigned long long)data.val,
+           get_current_time_ns(connection));
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -399,13 +405,40 @@ static uint16_t root_completer_id(DownstreamPCIeConnection *connection)
     return (connection->pci_bus_num << 8) | (devfn & 0xFF);
 }
 
+static void report_transaction(void *transaction,
+                               DownstreamPCIeConnection *connection,
+                               const char *action)
+{
+    IF_DBGOUT(REQUESTS, {
+            uint64_t transaction_time = ipc_trans_time(transaction);
+            uint64_t current_time = get_current_time_ns(connection);
+            int64_t diff = transaction_time - current_time;
+            int cmp = ((transaction_time + 1 != 0) ?
+                       ((diff >= 0) ?
+                        ((diff > (int64_t)quantum) ? 1 : 0) :
+                        (((int64_t)quantum + diff < 0) ? -1 : 0)) :
+                       0);
+            if (cmp == 0) {
+                DBGOUT(REQUESTS, "%s at time %"PRId64".\n",
+                       action, current_time);
+                if (transaction_time + 1 == 0) {
+                    DBGOUT(REQUESTS, "Running freely\n");
+                }
+            } else {
+                DBGOUT(REQUESTS, "%s at time %"PRId64".\n"
+                       "Transaction time %"PRId64". \n"
+                       "QEMU is %"PRId64" %s.\n",
+                       action, current_time, transaction_time,
+                       (cmp > 0) ? (diff - quantum) : (-diff - quantum),
+                       (cmp > 0) ? "late" : "early");
+            }
+        });
+}
+
 static void handle_completion(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_CompletionDecoded decoded;
     PCIeRequest *request;
-
-    DBGOUT(REQUESTS, "handle_completion at time %"PRId64". Local time %"PRId64"\n",
-           ipc_trans_time(transaction), get_current_time_ns(connection));
 
     decode_completion(transaction, &decoded);
     request = find_pcie_request(connection->requesters_table,
@@ -413,8 +446,10 @@ static void handle_completion(void *transaction, DownstreamPCIeConnection *conne
                                 decoded.tag);
     if ((request == NULL) || !request->waiting) {
         /* Nobody waits for this. */
+        report_transaction(transaction, connection, "unwaited completion");
         free_data_ipc_trans(transaction);
     } else {
+        report_transaction(transaction, connection, "handle_completion");
         pcie_request_ready(request, transaction);
         /* NOTE: transaction is now owned by the requester. */
     }
@@ -534,8 +569,7 @@ static void handle_request(void *transaction, DownstreamPCIeConnection *connecti
 {
     PCIE_RequestDecoded decoded;
 
-    DBGOUT(REQUESTS, "handle_request at time %"PRId64". Local time %"PRId64"\n",
-           ipc_trans_time(transaction), get_current_time_ns(connection));
+    report_transaction(transaction, connection, "handle_request");
 
     decode_request(transaction, &decoded);
     if (decoded.is_memory) {
@@ -561,6 +595,10 @@ static void handle_packet(IPCPacket *packet, IPCConnection *ipc_connection)
 
     if (transaction_time + 1 != 0) {
         channel->ops->rearm_timer(channel, transaction_time);
+    } else {
+        /* Check 1 second later. */
+        channel->ops->rearm_timer(channel,
+                                  get_current_time_ns(connection) + 1000000000);
     }
 
     if (!ipc_connection->waiting) {
