@@ -692,7 +692,7 @@ int64_t cpu_get_ticks(void);
 /* Caller must hold BQL */
 void cpu_enable_ticks(void);
 /* Caller must hold BQL */
-void cpu_disable_ticks(void);
+bool cpu_disable_ticks(void);
 void cpu_offset_clock(int64_t cpu_clock_offset);
 
 static inline int64_t get_ticks_per_sec(void)

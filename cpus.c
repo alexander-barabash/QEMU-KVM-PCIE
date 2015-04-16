@@ -495,11 +495,13 @@ void cpu_enable_ticks(void)
  * cpu_get_ticks() after that.
  * Caller must hold BQL which server as mutex for vm_clock_seqlock.
  */
-void cpu_disable_ticks(void)
+bool cpu_disable_ticks(void)
 {
+    bool was_enabled = false;
     /* Here, the really thing protected by seqlock is cpu_clock_offset. */
     seqlock_write_lock(&timers_state.vm_clock_seqlock);
     if (timers_state.cpu_ticks_enabled) {
+        was_enabled = true;
         if (!use_icount) {
             timers_state.cpu_ticks_offset += cpu_get_real_ticks();
         }
@@ -507,6 +509,7 @@ void cpu_disable_ticks(void)
         timers_state.cpu_ticks_enabled = 0;
     }
     seqlock_write_unlock(&timers_state.vm_clock_seqlock);
+    return was_enabled;
 }
 
 void cpu_offset_clock(int64_t cpu_clock_offset)
