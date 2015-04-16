@@ -101,5 +101,9 @@ static bool pcie_request_wait_function(void *user_data) {
 
 void wait_on_pcie_request(IPCConnection *connection, PCIeRequest *request)
 {
+    bool was_enabled = cpu_disable_ticks();
     wait_on_ipc_connection(connection, pcie_request_wait_function, request);
+    if (was_enabled) {
+        cpu_enable_ticks();
+    }
 }
