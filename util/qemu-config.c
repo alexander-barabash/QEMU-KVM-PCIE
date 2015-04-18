@@ -442,7 +442,7 @@ static inline int pp_sscanf4(const char *line, const char *format,
 
 int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
 {
-    char line[1024], group[64], id[64], arg[64], value[1024];
+    char line[1024], prefix[2];
     Location loc;
     QemuOptsList *list = NULL;
     Error *local_err = NULL;
@@ -451,7 +451,9 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
 
     bool ppscopes[64] = {true};
     int ppscope_index = 0;
+    struct PPString pp[4];
 
+    pp_init_array(pp, sizeof(pp) / sizeof(*pp));
     setenv("_CONFIG_FILE_DIRNAME", g_path_get_dirname(fname), 1);
     setenv("_CONFIG_FILE_BASENAME", g_path_get_basename(fname), 1);
 
@@ -459,23 +461,20 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
     while (fgets(line, sizeof(line), fp) != NULL) {
         loc_set_file(fname, ++lno);
 
-        if (sscanf(line, " %1s", value) < 1) {
+        if (sscanf(line, " %1s", prefix) < 1) {
             /* skip empty lines */
             continue;
         }
-        if (value[0] == '#') {
+        if (prefix[0] == '#') {
             /* comment */
             continue;
         }
-        if (value[0] == '!') {
+        if (prefix[0] == '!') {
             /* preprocessor */
             bool ppscope_open = false;
             bool pphandled = true;
             const char *pperror = NULL;
             bool ppscope_active = ppscopes[ppscope_index];
-            struct PPString pp[4];
-
-            pp_init_array(pp, sizeof(pp) / sizeof(*pp));
 
             if (pp_sscanf2(line, " ! iffile \"%m[^\"]%m[\"]", pp) > 0) {
                 if (pp_str(pp + 1)) {
@@ -606,8 +605,6 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
                 pphandled = false;
             }
 
-            pp_free_array(pp, sizeof(pp) / sizeof(*pp));
-
             if (ppscope_open) {
                 ppscope_index++;
                 if (ppscope_index < 64) {
@@ -627,20 +624,20 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
         if (!ppscopes[ppscope_index]) {
             continue;
         }
-        if (sscanf(line, " [ %63s \"%63[^\"]\" ]", group, id) == 2) {
+        if (pp_sscanf2(line, " [ %ms \"%m[^\"]\" ]", pp) == 2) {
             /* group with id */
-            list = find_list(lists, group, &local_err);
+            list = find_list(lists, pp_sub(pp), &local_err);
             if (local_err) {
                 error_report("%s", error_get_pretty(local_err));
                 error_free(local_err);
                 goto out;
             }
-            opts = qemu_opts_create(list, id, 1, NULL);
+            opts = qemu_opts_create(list, pp_sub(pp + 1), 1, NULL);
             continue;
         }
-        if (sscanf(line, " [ %63[^]] ]", group) == 1) {
+        if (pp_sscanf1(line, " [ %m[^]] ]", pp) == 1) {
             /* group without id */
-            list = find_list(lists, group, &local_err);
+            list = find_list(lists, pp_sub(pp), &local_err);
             if (local_err) {
                 error_report("%s", error_get_pretty(local_err));
                 error_free(local_err);
@@ -649,13 +646,13 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             opts = qemu_opts_create(list, NULL, 0, &error_abort);
             continue;
         }
-        if (sscanf(line, " %63s = \"%1023[^\"]\"", arg, value) == 2) {
+        if (pp_sscanf2(line, " %ms = \"%m[^\"]\"", pp) == 2) {
             /* arg = value */
             if (opts == NULL) {
                 error_report("no group defined");
                 goto out;
             }
-            if (qemu_opt_set(opts, arg, value) != 0) {
+            if (qemu_opt_set(opts, pp_sub(pp), pp_sub(pp + 1)) != 0) {
                 goto out;
             }
             continue;
@@ -669,6 +666,8 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
     }
     res = 0;
 out:
+    pp_free_array(pp, sizeof(pp) / sizeof(*pp));
+
     unsetenv("_CONFIG_FILE_DIRNAME");
     unsetenv("_CONFIG_FILE_BASENAME");
 
