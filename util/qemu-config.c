@@ -301,6 +301,14 @@ static inline void pp_init(struct PPString *pp)
     pp->sub = NULL;
 }
 
+static inline void pp_init_array(struct PPString *pp, size_t size)
+{
+    size_t i;
+    for (i = 0; i < size; ++i) {
+        pp_init(pp + i);
+    }
+}
+
 static inline void pp_free(struct PPString *pp)
 {
     if (pp->str) {
@@ -310,6 +318,14 @@ static inline void pp_free(struct PPString *pp)
         g_free(pp->str);
     }
     pp_init(pp);
+}
+
+static inline void pp_free_array(struct PPString *pp, size_t size)
+{
+    size_t i;
+    for (i = 0; i < size; ++i) {
+        pp_free(pp + i);
+    }
 }
 
 static inline char **pp_target(struct PPString *pp)
@@ -335,6 +351,95 @@ static inline const char *pp_sub(struct PPString *pp)
     return pp->sub;
 }
 
+static inline bool pp_str_eq(struct PPString *pp, const char *str)
+{
+    if (!str) {
+        return !pp->str;
+    }
+    if (!pp->str) {
+        return false;
+    }
+    return !strcmp(pp->str, str);
+}
+
+static inline bool pp_sub_eq(struct PPString *pp, const char *sub)
+{
+    pp_sub(pp);
+    if (!sub) {
+        return !pp->sub;
+    }
+    if (!pp->sub) {
+        return false;
+    }
+    return !strcmp(pp->sub, sub);
+}
+
+static inline bool pp_sub_eq_sub(struct PPString *pp, struct PPString *other)
+{
+    return pp_sub_eq(pp, pp_sub(other));
+}
+
+static inline bool pp_sub_setenv(struct PPString *key, struct PPString *value)
+{
+    const char *key_string = pp_sub(key);
+    if (key_string && *key_string) {
+        const char *value_string = pp_sub(value);
+        if (value_string) {
+            return setenv(key_string, value_string, 1) == 0;
+        } else {
+            return unsetenv(key_string) == 0;
+        }
+    } else {
+        return false;
+    }
+}
+
+static inline bool pp_sub_unsetenv(struct PPString *key)
+{
+    const char *key_string = pp_sub(key);
+    if (key_string && *key_string) {
+        return unsetenv(key_string) == 0;
+    } else {
+        return false;
+    }
+}
+
+static inline const char *pp_sub_getenv(struct PPString *key)
+{
+    const char *key_string = pp_sub(key);
+    if (key_string && *key_string) {
+        return getenv(key_string);
+    } else {
+        return NULL;
+    }
+}
+
+static inline int pp_sscanf1(const char *line, const char *format,
+                             struct PPString *pp)
+{
+    return sscanf(line, format, pp_target(pp));
+}
+
+static inline int pp_sscanf2(const char *line, const char *format,
+                             struct PPString *pp)
+{
+    return sscanf(line, format, pp_target(pp), pp_target(pp + 1));
+}
+
+static inline int pp_sscanf3(const char *line, const char *format,
+                             struct PPString *pp)
+{
+    return sscanf(line, format, pp_target(pp), pp_target(pp + 1),
+                  pp_target(pp + 2));
+}
+
+static inline int pp_sscanf4(const char *line, const char *format,
+                             struct PPString *pp)
+{
+    return sscanf(line, format, pp_target(pp), pp_target(pp + 1),
+                  pp_target(pp + 2), pp_target(pp + 3));
+}
+
 int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
 {
     char line[1024], group[64], id[64], arg[64], value[1024];
@@ -358,179 +463,161 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             /* skip empty lines */
             continue;
         }
-
-        if (sscanf(line, " %1[!] ", value) == 1) {
+        if (value[0] == '#') {
+            /* comment */
+            continue;
+        }
+        if (value[0] == '!') {
+            /* preprocessor */
             bool ppscope_open = false;
             bool pphandled = true;
-            bool pperror = false;
+            const char *pperror = NULL;
             bool ppscope_active = ppscopes[ppscope_index];
-            struct PPString pp, pp1, pp2, pp3;
+            struct PPString pp[4];
 
-            pp_init(&pp);
-            pp_init(&pp1);
-            pp_init(&pp2);
-            pp_init(&pp3);
+            pp_init_array(pp, sizeof(pp) / sizeof(*pp));
 
-            if (sscanf(line, " ! iffile \"%m[^\"]%m[\"]",
-                       pp_target(&pp), pp_target(&pp1)) > 0) {
-                if (pp_str(&pp1)) {
+            if (pp_sscanf2(line, " ! iffile \"%m[^\"]%m[\"]", pp) > 0) {
+                if (pp_str(pp + 1)) {
                     struct stat sb;
                     ppscope_open = true;
                     ppscope_active = ppscope_active &&
-                        (stat(pp_sub(&pp), &sb) == 0) && S_ISREG(sb.st_mode);
+                        (stat(pp_sub(pp), &sb) == 0) && S_ISREG(sb.st_mode);
                 } else {
                     error_report("Wrong syntax for !iffile");
                 }
-            } else if (sscanf(line, " ! ifdir \"%m[^\"]%m[\"]",
-                              pp_target(&pp), pp_target(&pp1)) > 0) {
-                if (pp_str(&pp1)) {
+            } else if (pp_sscanf2(line, " ! ifdir \"%m[^\"]%m[\"]", pp) > 0) {
+                if (pp_str(pp + 1)) {
                     struct stat sb;
                     ppscope_open = true;
                     ppscope_active = ppscope_active &&
-                        (stat(pp_sub(&pp), &sb) == 0) && S_ISDIR(sb.st_mode);
+                        (stat(pp_sub(pp), &sb) == 0) && S_ISDIR(sb.st_mode);
                 } else {
                     error_report("Wrong syntax for !ifdir");
                 }
-            } else if (sscanf(line, " ! ifdef %ms", pp_target(&pp)) == 1) {
+            } else if (pp_sscanf1(line, " ! ifdef %ms", pp) == 1) {
                 ppscope_open = true;
                 if (ppscope_active) {
-                    const char *ppvalue = getenv(pp_sub(&pp));
+                    const char *ppvalue = pp_sub_getenv(pp);
                     ppscope_active = ppvalue && *ppvalue;
                 }
-            } else if (sscanf(line, " ! ifndef %ms", pp_target(&pp)) == 1) {
+            } else if (pp_sscanf1(line, " ! ifndef %ms", pp) == 1) {
                 ppscope_open = true;
                 if (ppscope_active) {
-                    const char *ppvalue = getenv(pp_sub(&pp));
+                    const char *ppvalue = pp_sub_getenv(pp);
                     ppscope_active = !(ppvalue && *ppvalue);
                 }
-            } else if (sscanf(line, " ! if \" %m[^\"!=] %m[\"!=] %m[^\"] %m[\"]",
-                              pp_target(&pp), pp_target(&pp1),
-                              pp_target(&pp2), pp_target(&pp3)) > 0) {
-                if (pp_str(&pp3)) {
-                    if (strcmp(pp_str(&pp3), "\"")) {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
-                    } if (!strcmp(pp_str(&pp1), "==") ||
-                          !strcmp(pp_str(&pp1), "=")) {
+            } else if (pp_sscanf4(line,
+                                  " ! if \" %m[^\"!=] %m[\"!=] %m[^\"] %m[\"]",
+                                  pp) > 0) {
+                if (pp_str(pp + 3)) {
+                    if (!pp_sub_eq(pp + 3, "\"")) {
+                        pperror = "Wrong syntax for !if";
+                    } else if (pp_str_eq(pp + 1, "==") ||
+                               pp_str_eq(pp + 1, "=")) {
                         ppscope_open = true;
                         ppscope_active = ppscope_active &&
-                            !strcmp(pp_sub(&pp), pp_sub(&pp2));
-                    } else if (!strcmp(pp_str(&pp1), "!=")) {
+                            pp_sub_eq_sub(pp, pp + 2);
+                    } else if (pp_str_eq(pp + 1, "!=")) {
                         ppscope_open = true;
                         ppscope_active = ppscope_active &&
-                            !!strcmp(pp_sub(&pp), pp_sub(&pp2));
+                            !pp_sub_eq_sub(pp, pp + 2);
                     } else {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
+                        pperror = "Wrong syntax for !if";
                     }
-                } else if (!pp_str(&pp2)) {
-                    if (!strcmp(pp_str(&pp1), "\"")) {
+                } else if (!pp_str(pp + 2)) {
+                    if (pp_str_eq(pp + 1, "\"")) {
                         ppscope_open = true;
-                        ppscope_active = ppscope_active && !!*pp_sub(&pp);
+                        ppscope_active = ppscope_active && !!*pp_sub(pp);
                     } else {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
+                        pperror = "Wrong syntax for !if";
                     }
                 } else {
-                    error_report("Wrong syntax for !if");
-                    pperror = true;
+                    pperror = "Wrong syntax for !if";
                 }
-            } else if (sscanf(line, " ! if ! \" %m[^\"!=] %m[\"!=] %m[^\"] %m[\"]",
-                              pp_target(&pp), pp_target(&pp1),
-                              pp_target(&pp2), pp_target(&pp3)) > 0) {
-                if (pp_str(&pp3)) {
-                    if (strcmp(pp_str(&pp3), "\"")) {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
-                    } else if (!strcmp(pp_str(&pp1), "==") ||
-                               !strcmp(pp_str(&pp1), "=")) {
+            } else if (pp_sscanf4(line,
+                                  " ! if ! \" %m[^\"!=] %m[\"!=] %m[^\"] %m[\"]",
+                                  pp) > 0) {
+                if (pp_str(pp + 3)) {
+                    if (!pp_sub_eq(pp + 3, "\"")) {
+                        pperror = "Wrong syntax for !if";
+                    } else if (pp_str_eq(pp + 1, "==") ||
+                               pp_str_eq(pp + 1, "=")) {
                         ppscope_open = true;
                         ppscope_active = ppscope_active &&
-                            !!strcmp(pp_sub(&pp), pp_sub(&pp2));
-                    } else if (!strcmp(pp_str(&pp1), "!=")) {
+                            !pp_sub_eq_sub(pp, pp + 2);
+                    } else if (pp_str_eq(pp + 1, "!=")) {
                         ppscope_open = true;
                         ppscope_active = ppscope_active &&
-                            !strcmp(pp_sub(&pp), pp_sub(&pp2));
+                            pp_sub_eq_sub(pp, pp + 2);
                     } else {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
+                        pperror = "Wrong syntax for !if";
                     }
-                } else if (!pp_str(&pp2)) {
-                    if (!strcmp(pp_str(&pp1), "\"")) {
+                } else if (!pp_str(pp + 2)) {
+                    if (pp_str_eq(pp + 1, "\"")) {
                         ppscope_open = true;
-                        ppscope_active = ppscope_active && !*pp_sub(&pp);
+                        ppscope_active = ppscope_active && !*pp_sub(pp);
                     } else {
-                        error_report("Wrong syntax for !if");
-                        pperror = true;
+                        pperror = "Wrong syntax for !if";
                     }
                 } else {
-                    error_report("Wrong syntax for !if");
-                    pperror = true;
+                    pperror = "Wrong syntax for !if";
                 }
-            } else if (sscanf(line, " ! define %ms \"%m[^\"]%m[\"]",
-                              pp_target(&pp), pp_target(&pp1),
-                              pp_target(&pp2)) > 0) {
-                if (pp_str(&pp2)) {
+            } else if (pp_sscanf3(line,
+                                  " ! define %ms \"%m[^\"]%m[\"]", pp) > 0) {
+                if (pp_str(pp + 2)) {
                     if (ppscope_active) {
-                        setenv(pp_sub(&pp), pp_sub(&pp1), 1);
+                        pp_sub_setenv(pp, pp + 1);
                     }
                 } else {
-                    error_report("Missing value for define");
-                    pperror = true;
+                    pperror = "Missing value for define";
                 }
-            } else if (sscanf(line, " ! undef %ms", pp_target(&pp)) == 1) {
+            } else if (pp_sscanf1(line, " ! undef %ms", pp) == 1) {
                 if (ppscope_active) {
-                    unsetenv(pp_sub(&pp));
+                    pp_sub_unsetenv(pp);
                 }
-            } else if (sscanf(line, " ! show \"%m[^\"]%m[\"]",
-                              pp_target(&pp), pp_target(&pp1)) > 0) {
-                if (pp_str(&pp1)) {
+            } else if (pp_sscanf2(line, " ! show \"%m[^\"]%m[\"]", pp) > 0) {
+                if (pp_str(pp + 1)) {
                     if (ppscope_active) {
-                        printf("%s\n", pp_sub(&pp));
+                        printf("%s\n", pp_sub(pp));
                     }
                 } else {
-                    error_report("Missing value for define");
-                    pperror = true;
+                    pperror = "Missing value for show";
                 }
-            } else if ((sscanf(line, " ! %10[elseendif] ", value) == 1)) {
-                if (!strcmp(value, "else")) {
+            } else if (pp_sscanf1(line, " ! %ms ", pp) == 1) {
+                if (pp_str_eq(pp, "else")) {
                     /* change preprocessor scope */
                     if ((ppscope_index > 0) && !ppscopes[ppscope_index - 1]) {
                         ppscopes[ppscope_index] = false;
                     } else {
                         ppscopes[ppscope_index] = !ppscopes[ppscope_index];
                     }
-                } else if (!strcmp(value, "endif")) {
+                } else if (pp_str_eq(pp, "endif")) {
                     /* close preprocessor scope */
                     if (ppscope_index > 0) {
                         ppscope_index--;
                     } else {
-                        error_report("Too many !endif-s");
-                        pperror = true;
+                        pperror = "Too many !endif-s";
                     }
                 } else {
-                    error_report("Wrong preprocessor syntax");
-                    pperror = true;
+                    pperror = "Wrong preprocessor syntax";
                 }
             } else {
                 pphandled = false;
             }
 
-            pp_free(&pp);
-            pp_free(&pp1);
-            pp_free(&pp2);
-            pp_free(&pp3);
+            pp_free_array(pp, sizeof(pp) / sizeof(*pp));
 
             if (ppscope_open) {
                 ppscope_index++;
                 if (ppscope_index < 64) {
                     ppscopes[ppscope_index] = ppscope_active;
                 } else {
-                    error_report("Too many preprocessor levels");
-                    pperror = true;
+                    pperror = "Too many preprocessor levels";
                 }
             }
             if (pperror) {
+                error_report("%s", pperror);
                 goto out;
             }
             if (pphandled) {
@@ -538,10 +625,6 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
             }
         }
         if (!ppscopes[ppscope_index]) {
-            continue;
-        }
-        if (sscanf(line, " %1[#] ", value) == 1) {
-            /* comment */
             continue;
         }
         if (sscanf(line, " [ %63s \"%63[^\"]\" ]", group, id) == 2) {
