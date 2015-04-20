@@ -177,6 +177,12 @@ static inline void rr_record_clock_warp(int64_t warp_delta, uint64_t current_ico
     rr_record = rr_record && rr_do_record_clock_warp(warp_delta, current_icount);
 }
 
+bool rr_do_record_reg32(int cpu_index, uint32_t reg, uint32_t reg32_val);
+static inline void rr_record_reg32(int cpu_index, uint32_t reg,
+                                   uint32_t reg32_val) {
+    rr_record = rr_record && rr_do_record_reg32(cpu_index, reg, reg32_val);
+}
+
 #define SHIFT 0
 #include "rr-template.h"
 #define SHIFT 1

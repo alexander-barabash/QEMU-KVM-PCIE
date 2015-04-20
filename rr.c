@@ -22,6 +22,8 @@ void rr_init_bscript_values(struct rr_stream *rr_stream)
     rr_stream->cpu_read32_val = bscript_value_create(bstream, 32, 0, false);
     rr_stream->cpu_read64_val = bscript_value_create(bstream, 64, 0, false);
     rr_stream->clock_warp = bscript_value_create(bstream, 64, 0, false);
+    rr_stream->reg = bscript_value_create(bstream, 32, 0, false);
+    rr_stream->reg32_val = bscript_value_create(bstream, 32, 0, false);
     rr_stream->as_name = bscript_string_value_create(bstream);
     rr_stream->io_data = bscript_buffer_value_create(bstream);
 }

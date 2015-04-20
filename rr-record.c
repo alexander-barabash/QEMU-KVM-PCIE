@@ -100,6 +100,15 @@ bool rr_do_record_clock_warp(int64_t warp_delta, uint64_t current_icount)
         bscript_value_write64(rr_stream.clock_warp, warp_delta);        
 }
 
+bool rr_do_record_reg32(int cpu_index, uint32_t reg, uint32_t reg32_val)
+{
+    return
+        record_entry(REG32) &&
+        bscript_value_write32(rr_stream.cpu_index, cpu_index) &&
+        bscript_value_write32(rr_stream.reg, reg) &&
+        bscript_value_write32(rr_stream.reg32_val, reg32_val);
+}
+
 #define SHIFT 0
 #include "rr-record-template.h"
 #define SHIFT 1

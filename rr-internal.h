@@ -29,6 +29,7 @@ typedef enum {
     CPU_READ64 = 14,
     ADDRESS_SPACE = 15,
     CLOCK_WARP = 16,
+    REG32 = 17,
     NUM_RECORD_KINDS = (1 << NUM_FLAG_BITS),
 } RecordKind;
 
@@ -56,6 +57,8 @@ struct rr_stream {
     struct bscript_value *cpu_read32_val;
     struct bscript_value *cpu_read64_val;
     struct bscript_value *clock_warp;
+    struct bscript_value *reg;
+    struct bscript_value *reg32_val;
     struct bscript_string_value *as_name;
     struct bscript_buffer_value *io_data;
 };

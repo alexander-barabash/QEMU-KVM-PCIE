@@ -20,6 +20,16 @@ static inline int64_t get_next_clock_warp(void)
     return bscript_value_get64(rr_stream.clock_warp);
 }
 
+static inline uint32_t get_next_reg(void)
+{
+    return bscript_value_get32(rr_stream.reg);
+}
+
+static inline uint32_t get_next_reg32_val(void)
+{
+    return bscript_value_get32(rr_stream.reg32_val);
+}
+
 static inline int get_next_as_id(void)
 {
     return bscript_value_get32(rr_stream.as);
@@ -83,7 +93,7 @@ static inline bool is_before(uint64_t icount1, uint64_t icount2)
 }
 
 static bool rr_read_next_record(void);
-static bool rr_replay_pending(uint32_t special_op);
+static bool rr_replay_pending(ApplyRecordFunc **special_apply_record_fn);
 static bool rr_replay_loop(void);
 
 #define MAX_AS_REPLAY_ID 0x10000
@@ -201,6 +211,24 @@ static void replay_clock_warp(void)
     add_icount_clock_bias(get_next_clock_warp());
 }
 
+static void replay_reg32(void)
+{
+    int cpu_index = get_next_cpu_index();
+    uint32_t reg = get_next_reg();
+    uint32_t reg32_val = get_next_reg32_val();
+    CPUState *next_cpu;
+    CPUArchState *env;
+    if (reg < (int)(sizeof(env->regs) / sizeof(env->regs[0]))) {
+        for (next_cpu = first_cpu; next_cpu; next_cpu = CPU_NEXT(next_cpu)) {
+            if (next_cpu->cpu_index == cpu_index) {
+                env = next_cpu->env_ptr;
+                env->regs[reg] = reg32_val;
+                break;
+            }
+        }
+    }
+}
+
 static void do_replay_initial_time(void)
 {
 }
@@ -217,12 +245,19 @@ static void do_replay_cpu_start(void)
 
 bool rr_replay_cpu_start(void)
 {
-    return rr_replay_pending(CPU_START);
+    static ApplyRecordFunc *special_apply_record_fn[NUM_RECORD_KINDS] = {
+        [CPU_START] = do_replay_cpu_start,
+    };
+    return rr_replay_pending(special_apply_record_fn);
 }
 
 bool rr_replay_after_io_event(void)
 {
-    return rr_replay_pending(AS_WRITE);
+    static ApplyRecordFunc *special_apply_record_fn[NUM_RECORD_KINDS] = {
+        [AS_WRITE] = replay_as_write,
+        [REG32] = replay_reg32,
+    };
+    return rr_replay_pending(special_apply_record_fn);
 }
 
 static void do_replay_interrupt_request(void)
@@ -233,9 +268,12 @@ static void do_replay_interrupt_request(void)
 
 bool rr_do_replay_interrupt_request(uint32_t *interrupt_request)
 {
+    static ApplyRecordFunc *special_apply_record_fn[NUM_RECORD_KINDS] = {
+        [INTERRUPT_REQUEST] = do_replay_interrupt_request,
+    };
     rr_stream.p_interrupt_request = interrupt_request;
     *interrupt_request = 0;
-    return rr_replay_pending(INTERRUPT_REQUEST);
+    return rr_replay_pending(special_apply_record_fn);
 }
 
 static void do_replay_intno(void)
@@ -245,7 +283,10 @@ static void do_replay_intno(void)
 
 bool rr_do_replay_intno(int *intno)
 {
-    if (rr_replay_pending(INTNO)) {
+    static ApplyRecordFunc *special_apply_record_fn[NUM_RECORD_KINDS] = {
+        [INTNO] = do_replay_intno,
+    };
+    if (rr_replay_pending(special_apply_record_fn)) {
         *intno = rr_stream.next_intno;
         return true;
     } else {
@@ -261,9 +302,16 @@ static void do_replay_exit_request(void)
 
 bool rr_replay_exit_request(int *exit_request, int stage)
 {
-    uint32_t op = (stage == 0) ? EXIT_REQUEST_0 : EXIT_REQUEST_1;
+    static ApplyRecordFunc *special_apply_record_fn_0[NUM_RECORD_KINDS] = {
+        [EXIT_REQUEST_0] = do_replay_exit_request,
+    };
+    static ApplyRecordFunc *special_apply_record_fn_1[NUM_RECORD_KINDS] = {
+        [EXIT_REQUEST_1] = do_replay_exit_request,
+    };
+    ApplyRecordFunc **special_apply_record_fn = (stage == 0) ?
+        special_apply_record_fn_0 : special_apply_record_fn_1;
      rr_stream.do_exit_request = 0;
-    if (rr_replay_pending(op)) {
+    if (rr_replay_pending(special_apply_record_fn)) {
         *exit_request = rr_stream.do_exit_request;
         return true;
     } else {
@@ -327,6 +375,13 @@ static bool read_clock_warp(void)
     return bscript_value_read(rr_stream.clock_warp);
 }
 
+static bool read_reg32(void)
+{
+    return bscript_value_read(rr_stream.reg) &&
+        bscript_value_read(rr_stream.cpu_index);
+        bscript_value_read(rr_stream.reg32_val);
+}
+
 static ReadRecordFunc *read_record_fn[NUM_RECORD_KINDS] = {
     [INITIAL_TIME] = read_initial_time,
     [ADDRESS_SPACE] = read_as_record,
@@ -344,21 +399,13 @@ static ReadRecordFunc *read_record_fn[NUM_RECORD_KINDS] = {
     [CPU_READ32] = read_read_record32,
     [CPU_READ64] = read_read_record64,
     [CLOCK_WARP] = read_clock_warp,
+    [REG32] = read_reg32,
 };
 
 static ApplyRecordFunc *apply_record_fn[NUM_RECORD_KINDS] = {
     [INITIAL_TIME] = do_replay_initial_time,
     [ADDRESS_SPACE] = register_address_space,
     [CLOCK_WARP] = replay_clock_warp,
-};
-
-static ApplyRecordFunc *special_apply_record_fn[NUM_RECORD_KINDS] = {
-    [CPU_START] = do_replay_cpu_start,
-    [INTERRUPT_REQUEST] = do_replay_interrupt_request,
-    [INTNO] = do_replay_intno,
-    [EXIT_REQUEST_0] = do_replay_exit_request,
-    [EXIT_REQUEST_1] = do_replay_exit_request,
-    [AS_WRITE] = replay_as_write,
 };
 
 static bool read_next_record_header(void)
@@ -383,7 +430,7 @@ static bool rr_read_next_record(void)
     }
 }
 
-static bool rr_replay_pending(uint32_t special_op)
+static bool rr_replay_pending(ApplyRecordFunc **special_apply_record_fn)
 {
     uint64_t current_icount = get_current_icount();
     uint64_t next_icount;
@@ -422,15 +469,25 @@ static bool rr_replay_pending(uint32_t special_op)
             rr_replay = false;
             break;
         }
-        if (next_op == special_op) {
+        if (special_apply_record_fn) {
             fn = special_apply_record_fn[next_op];
         } else {
+            fn = NULL;
+        }
+        if (!fn) {
             fn = apply_record_fn[next_op];
         }
         if (!fn) {
-            if ((next_op != special_op) &&
-                (special_apply_record_fn[next_op] != NULL)) {
+            switch (next_op) {
+            case CPU_START:
+            case INTERRUPT_REQUEST:
+            case INTNO:
+            case EXIT_REQUEST_0:
+            case EXIT_REQUEST_1:
+            case AS_WRITE:
+            case REG32:
                 cpu_set_rr_deadline_immediate();
+                break;
             }
             break;
         }
@@ -443,7 +500,7 @@ static bool rr_replay_pending(uint32_t special_op)
 static bool rr_replay_loop(void)
 {
     rr_replay =
-        rr_replay && rr_read_next_record() && rr_replay_pending(NO_RECORD);
+        rr_replay && rr_read_next_record() && rr_replay_pending(NULL);
     return rr_replay;
 }
 
