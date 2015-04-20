@@ -624,27 +624,29 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
         if (!ppscopes[ppscope_index]) {
             continue;
         }
-        if (pp_sscanf2(line, " [ %ms \"%m[^\"]\" ]", pp) == 2) {
-            /* group with id */
-            list = find_list(lists, pp_sub(pp), &local_err);
-            if (local_err) {
-                error_report("%s", error_get_pretty(local_err));
-                error_free(local_err);
-                goto out;
+        if (prefix[0] == '[') {
+            if (pp_sscanf2(line, " [ %ms \"%m[^\"]\" ]", pp) == 2) {
+                /* group with id */
+                list = find_list(lists, pp_sub(pp), &local_err);
+                if (local_err) {
+                    error_report("%s", error_get_pretty(local_err));
+                    error_free(local_err);
+                    goto out;
+                }
+                opts = qemu_opts_create(list, pp_sub(pp + 1), 1, NULL);
+                continue;
             }
-            opts = qemu_opts_create(list, pp_sub(pp + 1), 1, NULL);
-            continue;
-        }
-        if (pp_sscanf1(line, " [ %m[^]] ]", pp) == 1) {
-            /* group without id */
-            list = find_list(lists, pp_sub(pp), &local_err);
-            if (local_err) {
-                error_report("%s", error_get_pretty(local_err));
-                error_free(local_err);
-                goto out;
+            if (pp_sscanf1(line, " [ %m[^]] ]", pp) == 1) {
+                /* group without id */
+                list = find_list(lists, pp_sub(pp), &local_err);
+                if (local_err) {
+                    error_report("%s", error_get_pretty(local_err));
+                    error_free(local_err);
+                    goto out;
+                }
+                opts = qemu_opts_create(list, NULL, 0, &error_abort);
+                continue;
             }
-            opts = qemu_opts_create(list, NULL, 0, &error_abort);
-            continue;
         }
         if (pp_sscanf2(line, " %ms = \"%m[^\"]\"", pp) == 2) {
             /* arg = value */
