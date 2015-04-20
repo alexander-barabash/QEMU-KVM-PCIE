@@ -26,6 +26,7 @@
 #include "hw/i386/pc.h"
 #include "sysemu/kvm.h"
 #include "hw/qdev.h"
+#include "rr.h"
 
 //#define VMPORT_DEBUG
 
@@ -127,10 +128,24 @@ void vmmouse_set_data(const uint32_t *data)
 {
     X86CPU *cpu = X86_CPU(current_cpu);
     CPUX86State *env = &cpu->env;
+    CPUState *cpu_state = ENV_GET_CPU(env);
 
-    env->regs[R_EAX] = data[0]; env->regs[R_EBX] = data[1];
-    env->regs[R_ECX] = data[2]; env->regs[R_EDX] = data[3];
-    env->regs[R_ESI] = data[4]; env->regs[R_EDI] = data[5];
+    if (rr_replay) {
+        return;
+    }
+
+    env->regs[R_EAX] = data[0];
+    rr_record_reg32(cpu_state->cpu_index, R_EAX, data[0]);
+    env->regs[R_EBX] = data[1];
+    rr_record_reg32(cpu_state->cpu_index, R_EBX, data[1]);
+    env->regs[R_ECX] = data[2];
+    rr_record_reg32(cpu_state->cpu_index, R_ECX, data[2]);
+    env->regs[R_EDX] = data[3];
+    rr_record_reg32(cpu_state->cpu_index, R_EDX, data[3]);
+    env->regs[R_ESI] = data[4];
+    rr_record_reg32(cpu_state->cpu_index, R_ESI, data[4]);
+    env->regs[R_EDI] = data[5];
+    rr_record_reg32(cpu_state->cpu_index, R_EDI, data[5]);
 }
 
 static const MemoryRegionOps vmport_ops = {
