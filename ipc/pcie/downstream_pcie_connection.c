@@ -435,6 +435,31 @@ static void report_transaction(void *transaction,
         });
 }
 
+static void report_time_request_completion(void *transaction,
+                                           DownstreamPCIeConnection *connection)
+{
+    IF_DBGOUT(REQUESTS, {
+            uint64_t transaction_time = ipc_trans_time(transaction);
+            uint64_t current_time = get_current_time_ns(connection);
+            if (transaction_time + 1 == 0) {
+                DBGOUT(REQUESTS, "Running freely at time %"PRId64".\n",
+                       current_time);
+            } else {
+                int64_t diff = transaction_time - current_time;
+                int cmp = (diff >= 0) ?
+                    ((diff > (int64_t)quantum) ? 1 : 0) :
+                    (((int64_t)quantum + diff < 0) ? -1 : 0);
+                DBGOUT(REQUESTS, "IPC target time %"PRId64" at time %"PRId64".\n",
+                       transaction_time, current_time);
+                if (cmp > 0) {
+                    DBGOUT(REQUESTS, 
+                           "QEMU has %"PRId64" slack.\n",
+                           diff - quantum);
+                }
+            }
+        });
+}
+
 static void handle_completion(void *transaction, DownstreamPCIeConnection *connection)
 {
     PCIE_CompletionDecoded decoded;
@@ -449,7 +474,11 @@ static void handle_completion(void *transaction, DownstreamPCIeConnection *conne
         report_transaction(transaction, connection, "unwaited completion");
         free_data_ipc_trans(transaction);
     } else {
-        report_transaction(transaction, connection, "handle_completion");
+        if (!request->is_time_request) {
+            report_transaction(transaction, connection, "handle_completion");
+        } else {
+            report_time_request_completion(transaction, connection);
+        }
         pcie_request_ready(request, transaction);
         /* NOTE: transaction is now owned by the requester. */
     }
@@ -667,16 +696,19 @@ static void ipc_channel_rearm_timer(IPCChannel *channel, uint64_t transaction_ti
     DownstreamPCIeConnection *connection =
         downstream_by_ipc_connection(ipc_connection);
     uint64_t local_time = channel->ops->get_current_time_ns(channel);
-    uint64_t target_time = transaction_time + quantum;
+    uint64_t target_time;
 
     if (connection->timer == NULL) {
         connection->timer =
             timer_new_ns(QEMU_CLOCK_VIRTUAL, ipc_timer_callback, connection);
     }
 
-    if (local_time >= target_time) {
+    if (transaction_time > local_time + quantum) {
+        target_time = transaction_time;
+    } else {
         target_time = local_time + quantum;
     }
+
     timer_mod_ns(connection->timer, target_time);
 }
 
