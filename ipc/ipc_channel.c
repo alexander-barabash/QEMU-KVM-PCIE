@@ -35,6 +35,12 @@
 #endif
 #include <errno.h>
 
+#ifndef _WIN32
+#define SOCKET_ERROR_VALUE (-1)
+#else
+#define SOCKET_ERROR_VALUE SOCKET_ERROR
+#endif
+
 #define IPC_DBGKEY ipc_channel
 #include "ipc/ipc_debug.h"
 IPC_DEBUG_ON(CHANNEL_DATA);
@@ -57,17 +63,16 @@ static bool connect_ipc_channel_tcp(IPCChannel *channel,
     memcpy(&serv_addr.sin_addr.s_addr,
            server->h_addr, 
            server->h_length);
+    serv_addr.sin_port = htons(port);
 
 #ifdef SOCK_CLOEXEC
     channel->fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 #else
     channel->fd = socket(AF_INET, SOCK_STREAM, 0);
 #endif
-    if (channel->fd != -1) {
+    if (channel->fd != SOCKET_ERROR_VALUE) {
 #ifndef SOCK_CLOEXEC
-#ifndef _WIN32
         qemu_set_cloexec(channel->fd);
-#endif
 #endif
         while (connect(channel->fd,
                        (struct sockaddr *)(&serv_addr),
@@ -117,7 +122,7 @@ static bool connect_ipc_channel_unix(IPCChannel *channel,
 #else
     channel->fd = socket(AF_UNIX, SOCK_STREAM, 0);
 #endif
-    if (channel->fd != -1) {
+    if (channel->fd != SOCKET_ERROR_VALUE) {
 #ifndef SOCK_CLOEXEC
         qemu_set_cloexec(channel->fd);
 #endif
