@@ -48,7 +48,7 @@ static bool connect_ipc_channel_tcp(IPCChannel *channel,
 
     server = gethostbyname(host);
     if (!server) {
-        fprintf(stderr, "Host \"%s\" not found.\n", host);
+        error_printf("Host \"%s\" not found." IPC_DEBUG_NEWLINE, host);
         return false;
     }
 
@@ -73,13 +73,13 @@ static bool connect_ipc_channel_tcp(IPCChannel *channel,
                        (struct sockaddr *)(&serv_addr),
                        sizeof(serv_addr)) != 0) {
             if (errno != EINTR) {
-                fprintf(stderr, "Failed to connect IPC socket %s:%d (error: %s).\n",
-                        host, port, strerror(errno));
+                error_printf("Failed to connect IPC socket %s:%d (error: %s)." IPC_DEBUG_NEWLINE,
+                             host, port, strerror(errno));
                 return false;
             }
         }
     } else {
-        fprintf(stderr, "Failed to create IPC socket..\n");
+        error_printf("Failed to create IPC socket.." IPC_DEBUG_NEWLINE);
         return false;
     }
     return true;
@@ -95,7 +95,7 @@ static bool connect_ipc_channel_unix(IPCChannel *channel,
     char *addr_path = addr.sun_path;
 
     if (strlen(socket_path) > sizeof(addr.sun_path) - 2) {
-        fprintf(stderr, "Invalid socket path \"%s\".\n", socket_path);
+        error_printf("Invalid socket path \"%s\"." IPC_DEBUG_NEWLINE, socket_path);
         return false;
     }
 
@@ -125,12 +125,12 @@ static bool connect_ipc_channel_unix(IPCChannel *channel,
                        (struct sockaddr *)(&addr),
                        addr_size) != 0) {
             if (errno != EINTR) {
-                fprintf(stderr, "Failed to connect IPC socket %s (error: %s).\n", socket_path, strerror(errno));
+                error_printf("Failed to connect IPC socket %s (error: %s)." IPC_DEBUG_NEWLINE, socket_path, strerror(errno));
                 return false;
             }
         }
     } else {
-        fprintf(stderr, "Failed to create IPC socket..\n");
+        error_printf("Failed to create IPC socket.." IPC_DEBUG_NEWLINE);
         return false;
     }
     return true;
@@ -144,7 +144,7 @@ bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
     const char *last_colon;
     const char *port_string;
     if (!socket_path || strlen(socket_path) == 0) {
-        fprintf(stderr, "Invalid null socket path.\n");
+        error_printf("Invalid null socket path." IPC_DEBUG_NEWLINE);
         return false;
     }
     last_colon = strrchr(socket_path, ':');
@@ -160,7 +160,7 @@ bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
         port = strtoul(port_string, &endptr, 0);
         if ((endptr && *endptr) || (port > 0xFFFF)) {
             g_free(host);
-            fprintf(stderr, "Invalid socket path \"%s\".\n", socket_path);
+            error_printf("Invalid socket path \"%s\"." IPC_DEBUG_NEWLINE, socket_path);
             return false;
         }
         connected = connect_ipc_channel_tcp(channel, host, (uint16_t)port);
@@ -178,12 +178,28 @@ bool setup_ipc_channel(IPCChannel *channel, IPCChannelOps *ops,
     }
 }
 
+#ifdef _WIN32
+static LPSTR formatError(int e)
+{
+	LPSTR error_string = NULL;
+
+	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                      FORMAT_MESSAGE_FROM_SYSTEM |
+                      FORMAT_MESSAGE_IGNORE_INSERTS,
+                      NULL, e,
+                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                      (LPTSTR)&error_string, 0, NULL);
+        return error_string;
+}
+#endif
+
 bool read_ipc_channel_data(IPCChannel *channel,
                            uint8_t *buffer, size_t size)
 {
     ssize_t len;
     DBGOUT(CHANNEL_DATA, "read_ipc_channel_data size=%d", (unsigned)size);
     while (size > 0) {
+#ifndef _WIN32
         len = read(channel->fd, buffer, size);
         if (len == -1 && errno == EINTR) {
             DBGOUT(CHANNEL_DATA, "read_ipc_channel_data restarted. errno=%d", errno);
@@ -193,13 +209,34 @@ bool read_ipc_channel_data(IPCChannel *channel,
             DBGOUT(CHANNEL_DATA, "read_ipc_channel_data failed. errno=%d", errno);
             return false;
         }
+#else
+        len = recv(channel->fd, (char *)buffer, size, MSG_WAITALL);
+        if ((len <= 0) || (len == SOCKET_ERROR)) {
+            int last_error = WSAGetLastError();
+            LPSTR error_string;
+            if (last_error == WSAEINTR)  {
+                DBGOUT(CHANNEL_DATA, "read_ipc_channel_data restarted.");
+                continue;
+            }
+            error_string = formatError(last_error);
+            if (error_string) {
+                DBGOUT(CHANNEL_DATA,
+                       "read_ipc_channel_data failed. last error=%s", error_string);
+                LocalFree(error_string);
+            } else {
+                DBGOUT(CHANNEL_DATA,
+                       "read_ipc_channel_data failed. last error=%d", last_error);
+            }
+            return false;
+        }
+#endif
         IF_DBGOUT(CHANNEL_DATA, {
                 ssize_t ii;
                 DBGPRINT("read_ipc_channel_data: ");
                 for(ii = 0; ii < len; ++ii) {
                     DBGPRINT("%2.2X", buffer[ii]);
                 }
-                DBGPRINT("\n");
+                DBGPRINT(IPC_DEBUG_NEWLINE);
             });
         size -= len;
         buffer += len;
@@ -217,9 +254,10 @@ bool write_ipc_channel_data(IPCChannel *channel,
             for(len = 0; (size_t)len < size; ++len) {
                 DBGPRINT("%2.2X", ((uint8_t *)data)[len]);
             }
-            DBGPRINT("\n");
+            DBGPRINT(IPC_DEBUG_NEWLINE);
         });
     while (size > 0) {
+#ifndef _WIN32
         len = write(channel->fd, buffer, size);
         if (len == -1 && errno == EINTR) {
             continue;
@@ -228,6 +266,27 @@ bool write_ipc_channel_data(IPCChannel *channel,
             DBGOUT(CHANNEL_DATA, "write_ipc_channel_data failed. errno=%d", errno);
             return false;
         }
+#else
+        len = send(channel->fd, (const char *)buffer, size, 0);
+        if ((len <= 0) || (len == SOCKET_ERROR)) {
+            int last_error = WSAGetLastError();
+            LPSTR error_string;
+            if (last_error == WSAEINTR)  {
+                DBGOUT(CHANNEL_DATA, "write_ipc_channel_data restarted.");
+                continue;
+            }
+            error_string = formatError(last_error);
+            if (error_string) {
+                DBGOUT(CHANNEL_DATA,
+                       "write_ipc_channel_data failed. last error=%s", error_string);
+                LocalFree(error_string);
+            } else {
+                DBGOUT(CHANNEL_DATA,
+                       "write_ipc_channel_data failed. last error=%d", last_error);
+            }
+            return false;
+        }
+#endif
         size -= len;
         buffer += len;
     }
