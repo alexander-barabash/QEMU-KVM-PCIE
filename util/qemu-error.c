@@ -13,6 +13,12 @@
 #include <stdio.h>
 #include "monitor/monitor.h"
 
+static QemuMutex error_printf_lock;
+static void __attribute__((__constructor__)) init_error_printf_lock(void)
+{
+    qemu_mutex_init(&error_printf_lock);
+}
+
 /*
  * Print to current monitor if we have one, else to stderr.
  * TODO should return int, so callers can calculate width, but that
@@ -20,11 +26,13 @@
  */
 void error_vprintf(const char *fmt, va_list ap)
 {
+    qemu_mutex_lock(&error_printf_lock);
     if (cur_mon && !monitor_cur_is_qmp()) {
         monitor_vprintf(cur_mon, fmt, ap);
     } else {
         vfprintf(stderr, fmt, ap);
     }
+    qemu_mutex_unlock(&error_printf_lock);
 }
 
 /*
@@ -172,7 +180,9 @@ static void error_print_loc(void)
     const char *const *argp;
 
     if (!cur_mon && progname) {
+        qemu_mutex_lock(&error_printf_lock);
         fprintf(stderr, "%s:", progname);
+        qemu_mutex_unlock(&error_printf_lock);
         sep = " ";
     }
     switch (cur_loc->kind) {
