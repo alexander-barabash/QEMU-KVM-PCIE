@@ -297,6 +297,10 @@ static int cpu_post_load(void *opaque, int version_id)
      * (otherwise the migration will fail with invalid guest state
      * error).
      */
+    if (rr_deterministic) {
+        cs->interrupt_request = 0;
+    }
+
     if (!(env->cr[0] & CR0_PE_MASK) &&
         (env->segs[R_CS].flags >> DESC_DPL_SHIFT & 3) != 0) {
         env->segs[R_CS].flags &= ~(env->segs[R_CS].flags & DESC_DPL_MASK);
