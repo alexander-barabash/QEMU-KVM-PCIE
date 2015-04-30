@@ -253,7 +253,13 @@ void acpi_table_add(const QemuOpts *opts, Error **errp)
         goto out;
     }
 
-    pathnames = g_strsplit(hdrs->has_file ? hdrs->file : hdrs->data, ":", 0);
+#ifndef _WIN32
+#define ACPI_PATH_DELIMETER ":"
+#else
+#define ACPI_PATH_DELIMETER ";"
+#endif
+    pathnames = g_strsplit(hdrs->has_file ? hdrs->file : hdrs->data,
+                           ACPI_PATH_DELIMETER, 0);
     if (pathnames == NULL || pathnames[0] == NULL) {
         error_setg(&err, "'-acpitable' requires at least one pathname");
         goto out;
