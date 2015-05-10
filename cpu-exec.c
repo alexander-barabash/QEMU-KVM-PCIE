@@ -26,6 +26,12 @@
 #include "qemu/timer.h"
 #include "rr.h"
 
+#ifdef _WIN64
+#define NORMAL_SIGSETJMP(jmp_env) _setjmp(jmp_env, NULL)
+#else
+#define NORMAL_SIGSETJMP(jmp_env) sigsetjmp(jmp_env, 0)
+#endif
+
 /* -icount align implementation. */
 
 typedef struct SyncClocks {
@@ -409,7 +415,7 @@ int cpu_exec(CPUArchState *env)
 
     /* prepare setjmp context for exception handling */
     for(;;) {
-        if (sigsetjmp(cpu->jmp_env, 0) == 0) {
+        if (NORMAL_SIGSETJMP(cpu->jmp_env) == 0) {
             /* if an exception is pending, we execute it here */
             if (cpu->exception_index >= 0) {
                 if (cpu->exception_index >= EXCP_INTERRUPT) {
