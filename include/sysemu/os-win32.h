@@ -73,7 +73,48 @@
 #define siglongjmp(env, val) longjmp(env, val)
 
 /* Declaration of ffs() is missing in MinGW's strings.h. */
-int ffs(int i);
+/* The implementation is missing, as well. */
+static inline int ffs8(int8_t i)
+{
+    int table[0x10] = { 0, 1, 2, 1, 3, 1, 2, 1, 4, 1, 2, 1, 3, 1, 2, 1 };
+
+    if (i) {
+        int result = table[i & 0xf];
+        if (result) {
+            return result;
+        } else {
+            return 0x4 | table[(i >> 4) & 0xf];
+        }
+    } else {
+        return 0;
+    }
+}
+static inline int ffs16(int16_t i)
+{
+    if (i) {
+        int result = ffs8(i);
+        if (result) {
+            return result;
+        } else {
+            return 0x8 | ffs8(i >> 8);
+        }
+    } else {
+        return 0;
+    }
+}
+static inline int ffs(int i)
+{
+    if (i) {
+        int result = ffs16(i);
+        if (result) {
+            return result;
+        } else {
+            return 0x10 | ffs16(i >> 16);
+        }
+    } else {
+        return 0;
+    }
+}
 
 /* Missing POSIX functions. Don't use MinGW-w64 macros. */
 #undef gmtime_r
