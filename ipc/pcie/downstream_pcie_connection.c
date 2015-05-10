@@ -121,8 +121,8 @@ void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         uint64_t val;
     } data;
     data.val = val;
-    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%llX := 0x%llX at time %"PRId64"",
-           size, (unsigned long long)addr, (unsigned long long)data.val,
+    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%"PRIX64" := 0x%"PRIX64" at time %"PRId64"",
+           size, (uint64_t)addr, (uint64_t)data.val,
            get_current_time_ns(connection));
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
@@ -138,7 +138,7 @@ void write_downstream_pcie_memory(DownstreamPCIeConnection *connection,
                                        size,
                                        data.bytes);
     pcie_request_done(request);
-    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%llX done", size, (unsigned long long)addr);
+    DBGOUT(REQUESTS, "write_downstream_pcie_memory %d bytes @ 0x%"PRIX64" done", size, (uint64_t)addr);
 }
 
 uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
@@ -154,7 +154,7 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         uint64_t val;
     } data;
     data.val = 0;
-    DBGOUT(REQUESTS, "read_downstream_pcie_memory %d bytes @ 0x%llX", size, (unsigned long long)addr);
+    DBGOUT(REQUESTS, "read_downstream_pcie_memory %d bytes @ 0x%"PRIX64"", size, (uint64_t)addr);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -176,8 +176,8 @@ uint64_t read_downstream_pcie_memory(DownstreamPCIeConnection *connection,
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
     }
     pcie_request_done(request);
-    DBGOUT(REQUESTS, "read_downstream_pcie_memory %d bytes @ 0x%llX = 0x%llX", size,
-           (unsigned long long)addr, (unsigned long long)data.val);
+    DBGOUT(REQUESTS, "read_downstream_pcie_memory %d bytes @ 0x%"PRIX64" = 0x%"PRIX64"", size,
+           (uint64_t)addr, (uint64_t)data.val);
     return data.val;
 }
 
@@ -193,8 +193,8 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = val;
-    DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%llX := 0x%X", size,
-           (unsigned long long)addr, data.val);
+    DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%"PRIX64" := 0x%X", size,
+           (uint64_t)addr, data.val);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -213,7 +213,7 @@ void write_downstream_pcie_io(DownstreamPCIeConnection *connection,
         return;
     }
     pcie_request_done(request);
-    DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%llX done", size, (unsigned long long)addr);
+    DBGOUT(REQUESTS, "write_downstream_pcie_io %d bytes @ 0x%"PRIX64" done", size, (uint64_t)addr);
 }
 
 uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
@@ -229,7 +229,7 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
         uint32_t val;
     } data;
     data.val = 0;
-    DBGOUT(REQUESTS, "read_downstream_pcie_io %d bytes @ 0x%llX", size, (unsigned long long)addr);
+    DBGOUT(REQUESTS, "read_downstream_pcie_io %d bytes @ 0x%"PRIX64"", size, (uint64_t)addr);
     if (!register_pcie_request(connection->requesters_table,
                                requester_id,
                                &request,
@@ -251,8 +251,8 @@ uint32_t read_downstream_pcie_io(DownstreamPCIeConnection *connection,
         memcpy(data.bytes, decoded.payload_data + (addr & 3), size);
     }
     pcie_request_done(request);
-    DBGOUT(REQUESTS, "read_downstream_pcie_io %d bytes @ 0x%llX = 0x%X", size,
-           (unsigned long long)addr, data.val);
+    DBGOUT(REQUESTS, "read_downstream_pcie_io %d bytes @ 0x%"PRIX64" = 0x%X", size,
+           (uint64_t)addr, data.val);
     return data.val;
 }
 
