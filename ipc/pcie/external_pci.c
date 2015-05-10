@@ -285,8 +285,8 @@ static void pci_update_region_mapping(PCIDevice *d, PCIIORegion *r,
     }
     r->addr = new_addr;
     if (r->addr != PCI_BAR_UNMAPPED) {
-        DBGOUT(GENERAL, "pci_update_region_mapping in %s: address=%llx\n",
-               d->name, (unsigned long long)r->addr);
+        DBGOUT(GENERAL, "pci_update_region_mapping in %s: address=0x%"PRIx64"\n",
+               d->name, (uint64_t)r->addr);
         memory_region_add_subregion_overlap(r->address_space,
                                             r->addr, r->memory, 1);
     } else {
@@ -369,8 +369,8 @@ static void pci_update_bar_mapping(PCIDevice *dev, uint16_t pci_command,
     if (base_address != PCI_BAR_UNMAPPED) {
         base_address &= ~(bar_size(bar_info) - 1);
         DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: "
-               "address=%llx is_rom=%d is_io=%d is_64bit=%d\n",
-               dev->name, index, (unsigned long long)base_address,
+               "address=0x%"PRIx64" is_rom=%d is_io=%d is_64bit=%d\n",
+               dev->name, index, (uint64_t)base_address,
                bar_is_rom(bar_info), bar_is_io(bar_info), bar_is_64bit(bar_info));
     } else {
         DBGOUT(GENERAL, "pci_update_bar_mapping on %s.%d: "
@@ -454,8 +454,8 @@ external_pci_read_direct(void *opaque, hwaddr addr, unsigned size)
         uint64_t qword;
     } *pointer = p;
 
-    DBGOUT(GENERAL, "external_pci_read_direct addr=0x%llX size=%d",
-           (unsigned long long)addr, size);
+    DBGOUT(GENERAL, "external_pci_read_direct addr=0x%"PRIX64" size=%d",
+           (uint64_t)addr, size);
 
     switch (size) {
     case 1:
@@ -477,7 +477,7 @@ static void
 external_pci_write_direct(void *opaque, hwaddr addr, uint64_t val,
                           unsigned size)
 {
-    void *p = (void *)((long)opaque + (long)addr);
+    void *p = (void *)((intptr_t)opaque + (intptr_t)addr);
     union {
         uint8_t byte;
         uint16_t word;
@@ -485,8 +485,8 @@ external_pci_write_direct(void *opaque, hwaddr addr, uint64_t val,
         uint64_t qword;
     } *pointer = p;
     
-    DBGOUT(GENERAL, "external_pci_write_direct addr=0x%llX val=0x%llX size=%d",
-           (unsigned long long)addr, (unsigned long long)val, size);
+    DBGOUT(GENERAL, "external_pci_write_direct addr=0x%"PRIX64" val=0x%"PRIX64" size=%d",
+           (uint64_t)addr, (uint64_t)val, size);
 
     switch (size) {
     case 1:
@@ -511,8 +511,8 @@ external_pci_read_memory(void *opaque, hwaddr addr, unsigned size)
 {
     BARInfo *bar_info = opaque;
 
-    DBGOUT(GENERAL, "external_pci_read_memory addr=0x%llX size=%d",
-           (unsigned long long)addr, size);
+    DBGOUT(GENERAL, "external_pci_read_memory addr=0x%"PRIX64" size=%d",
+           (uint64_t)addr, size);
 
     if (bar_info->need_flush) {
         bar_info->need_flush = false;
@@ -531,8 +531,8 @@ external_pci_write_memory(void *opaque, hwaddr addr, uint64_t val,
 {
     BARInfo *bar_info = opaque;
     
-    DBGOUT(GENERAL, "external_pci_write_memory addr=0x%llX val=0x%llX size=%d",
-           (unsigned long long)addr, (unsigned long long)val, size);
+    DBGOUT(GENERAL, "external_pci_write_memory addr=0x%"PRIX64" val=0x%"PRIX64" size=%d",
+           (uint64_t)addr, (uint64_t)val, size);
 
     switch (size) {
     case 1:
@@ -559,15 +559,15 @@ external_pci_read_mmio(void *opaque, hwaddr addr, unsigned size)
     BARInfo *bar_info = opaque;
     uint64_t val;
 
-    DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%llX size=%d",
-           (unsigned long long)addr, size);
+    DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%"PRIX64" size=%d",
+           (uint64_t)addr, size);
 
     val = read_downstream_pcie_memory(bar_info->dev->ipc_connection,
                                       &bar_info->dev->dev,
                                       bar_info->base_address + addr,
                                       size);
-    DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%llX size=%d val=0x%llX",
-           (unsigned long long)addr, size, (unsigned long long)val);
+    DBGOUT(GENERAL, "external_pci_read_mmio addr=0x%"PRIX64" size=%d val=0x%"PRIX64"",
+           (uint64_t)addr, size, (uint64_t)val);
     return val;
 }
 
@@ -577,8 +577,8 @@ external_pci_write_mmio(void *opaque, hwaddr addr, uint64_t val,
 {
     BARInfo *bar_info = opaque;
     
-    DBGOUT(GENERAL, "external_pci_write_mmio addr=0x%llX size=%d val=0x%llX",
-           (unsigned long long)addr, size, (unsigned long long)val);
+    DBGOUT(GENERAL, "external_pci_write_mmio addr=0x%"PRIX64" size=%d val=0x%"PRIX64"",
+           (uint64_t)addr, size, (uint64_t)val);
 
     write_downstream_pcie_memory(bar_info->dev->ipc_connection,
                                  &bar_info->dev->dev,
@@ -592,15 +592,15 @@ external_pci_read_io(void *opaque, hwaddr addr, unsigned size)
     BARInfo *bar_info = opaque;
     uint64_t val;
 
-    DBGOUT(GENERAL, "external_pci_read_io addr=0x%llX size=%d",
-           (unsigned long long)addr, size);
+    DBGOUT(GENERAL, "external_pci_read_io addr=0x%"PRIX64" size=%d",
+           (uint64_t)addr, size);
 
     val = read_downstream_pcie_io(bar_info->dev->ipc_connection,
                                   &bar_info->dev->dev,
                                   bar_info->base_address + addr,
                                   size);
-    DBGOUT(GENERAL, "external_pci_read_io addr=0x%llX size=%d val=0x%llX",
-           (unsigned long long)addr, size, (unsigned long long)val);
+    DBGOUT(GENERAL, "external_pci_read_io addr=0x%"PRIX64" size=%d val=0x%"PRIX64"",
+           (uint64_t)addr, size, (uint64_t)val);
     return val;
 }
 
@@ -610,8 +610,8 @@ external_pci_write_io(void *opaque, hwaddr addr, uint64_t val,
 {
     BARInfo *bar_info = opaque;
     
-    DBGOUT(GENERAL, "external_pci_write_io addr=0x%llX size=%d val=0x%llX",
-           (unsigned long long)addr, size, (unsigned long long)val);
+    DBGOUT(GENERAL, "external_pci_write_io addr=0x%"PRIX64" size=%d val=0x%"PRIX64"",
+           (uint64_t)addr, size, (uint64_t)val);
 
     write_downstream_pcie_io(bar_info->dev->ipc_connection,
                              &bar_info->dev->dev,
