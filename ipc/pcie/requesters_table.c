@@ -35,8 +35,8 @@ static inline PCIePendingRequests *
 find_pcie_pending_requests(GHashTable *requesters_table, uint16_t requester_id)
 {
     gpointer key = GUINT_TO_POINTER(requester_id);
-    DBGOUT(REQUESTS, "find_pcie_pending_requests in table %lx for id %d\n",
-           (long)requesters_table, requester_id);
+    DBGOUT(REQUESTS, "find_pcie_pending_requests in table %p for id %d\n",
+           requesters_table, requester_id);
     return g_hash_table_lookup(requesters_table, key);
 }
 
