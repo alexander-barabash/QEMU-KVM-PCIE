@@ -35,10 +35,10 @@ struct IPCChannelOps {
 };
 
 struct IPCChannel {
-#ifndef _WIN32
-    int fd;
+#ifndef _WIN64
+    int32_t fd;
 #else
-    long fd;
+    int64_t fd;
 #endif
     IPCChannelOps *ops;
 };
