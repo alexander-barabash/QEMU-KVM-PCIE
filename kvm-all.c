@@ -78,7 +78,11 @@ struct KVMState
 {
     KVMSlot *slots;
     int nr_slots;
+#ifdef _WIN32
+    HANDLE fd;
+#else
     int fd;
+#endif
     int vmfd;
     int coalesced_mmio;
     struct kvm_coalesced_mmio_ring *coalesced_mmio_ring;
