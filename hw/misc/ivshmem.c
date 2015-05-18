@@ -16,6 +16,7 @@
  * Contributions after 2012-01-13 are licensed under the terms of the
  * GNU GPL, version 2 or (at your option) any later version.
  */
+#ifdef CONFIG_LINUX
 #include "hw/hw.h"
 #include "hw/i386/pc.h"
 #include "hw/pci/pci.h"
@@ -838,3 +839,4 @@ static void ivshmem_register_types(void)
 }
 
 type_init(ivshmem_register_types)
+#endif
