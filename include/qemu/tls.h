@@ -42,6 +42,11 @@
 #define DECLARE_TLS(type, x) extern DEFINE_TLS(type, x)
 #define DEFINE_TLS(type, x)  __thread __typeof__(type) tls__##x
 #define tls_var(x)           tls__##x
+#elif defined(_WIN32)
+/* mingw gcc supports this now. */
+#define DECLARE_TLS(type, x) extern DEFINE_TLS(type, x)
+#define DEFINE_TLS(type, x)  __thread __typeof__(type) tls__##x
+#define tls_var(x)           tls__##x
 #else
 /* Dummy implementations which define plain global variables */
 #define DECLARE_TLS(type, x) extern DEFINE_TLS(type, x)
