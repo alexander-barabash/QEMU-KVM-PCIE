@@ -293,7 +293,7 @@ static CharDriverState* create_eventfd_chr_device(void * opaque, EventNotifier *
     /* create a event character device based on the passed eventfd */
     IVShmemState *s = opaque;
     CharDriverState * chr;
-    int eventfd = event_notifier_get_fd(n);
+    FDTYPE eventfd = event_notifier_get_fd(n);
 
     chr = qemu_chr_open_eventfd(eventfd);
 

@@ -78,11 +78,7 @@ struct KVMState
 {
     KVMSlot *slots;
     int nr_slots;
-#ifdef _WIN32
-    HANDLE fd;
-#else
-    int fd;
-#endif
+    FDTYPE fd;
     int vmfd;
     int coalesced_mmio;
     struct kvm_coalesced_mmio_ring *coalesced_mmio_ring;
@@ -821,7 +817,7 @@ static void kvm_mem_ioeventfd_add(MemoryListener *listener,
                                   bool match_data, uint64_t data,
                                   EventNotifier *e)
 {
-    int fd = event_notifier_get_fd(e);
+    FDTYPE fd = event_notifier_get_fd(e);
     int r;
 
     r = kvm_set_ioeventfd_mmio(fd, section->offset_within_address_space,
@@ -839,7 +835,7 @@ static void kvm_mem_ioeventfd_del(MemoryListener *listener,
                                   bool match_data, uint64_t data,
                                   EventNotifier *e)
 {
-    int fd = event_notifier_get_fd(e);
+    FDTYPE fd = event_notifier_get_fd(e);
     int r;
 
     r = kvm_set_ioeventfd_mmio(fd, section->offset_within_address_space,
@@ -855,7 +851,7 @@ static void kvm_io_ioeventfd_add(MemoryListener *listener,
                                  bool match_data, uint64_t data,
                                  EventNotifier *e)
 {
-    int fd = event_notifier_get_fd(e);
+    FDTYPE fd = event_notifier_get_fd(e);
     int r;
 
     r = kvm_set_ioeventfd_pio(fd, section->offset_within_address_space,
@@ -874,7 +870,7 @@ static void kvm_io_ioeventfd_del(MemoryListener *listener,
                                  EventNotifier *e)
 
 {
-    int fd = event_notifier_get_fd(e);
+    FDTYPE fd = event_notifier_get_fd(e);
     int r;
 
     r = kvm_set_ioeventfd_pio(fd, section->offset_within_address_space,

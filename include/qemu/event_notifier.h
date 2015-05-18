@@ -17,6 +17,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+typedef HANDLE FDTYPE;
+#else
+typedef int FDTYPE;
 #endif
 
 struct EventNotifier {
@@ -35,7 +38,7 @@ void event_notifier_cleanup(EventNotifier *);
 int event_notifier_set(EventNotifier *);
 int event_notifier_test_and_clear(EventNotifier *);
 int event_notifier_set_handler(EventNotifier *, EventNotifierHandler *);
-int event_notifier_get_fd(EventNotifier *);
+FDTYPE event_notifier_get_fd(EventNotifier *);
 
 #ifdef CONFIG_POSIX
 void event_notifier_init_fd(EventNotifier *, int fd);
