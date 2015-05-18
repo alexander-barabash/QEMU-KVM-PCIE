@@ -226,6 +226,8 @@ struct CPUState {
     struct QemuThread *thread;
 #ifdef _WIN32
     HANDLE hThread;
+    HANDLE kvm_handle;
+    HANDLE kick_event;
 #endif
     int thread_id;
     uint32_t host_tid;
