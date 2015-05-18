@@ -31,6 +31,11 @@ HANDLE event_notifier_get_handle(EventNotifier *e)
     return e->event;
 }
 
+int event_notifier_get_fd(EventNotifier *e)
+{
+    return (int)event_notifier_get_handle(e);
+}
+
 int event_notifier_set_handler(EventNotifier *e,
                                EventNotifierHandler *handler)
 {
