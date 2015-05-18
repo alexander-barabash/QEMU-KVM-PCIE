@@ -20,6 +20,7 @@
  *  Copyright (C) 2008, Red Hat, Amit Shah (amit.shah@redhat.com)
  *  Copyright (C) 2008, IBM, Muli Ben-Yehuda (muli@il.ibm.com)
  */
+#ifdef CONFIG_LINUX
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/io.h>
@@ -1960,3 +1961,4 @@ close_rom:
     }
     fclose(fp);
 }
+#endif /* CONFIG_LINUX */
