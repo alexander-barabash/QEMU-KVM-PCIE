@@ -279,7 +279,7 @@ bool aio_poll(AioContext *ctx, bool blocking)
 {
     AioHandler *node;
     HANDLE events[MAXIMUM_WAIT_OBJECTS + 1];
-    bool was_dispatching, progress, have_select_revents, first;
+    bool was_dispatching, progress, have_select_revents = false, first;
     int count;
     int timeout;
 
