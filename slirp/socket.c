@@ -93,8 +93,12 @@ size_t sopreprbuf(struct socket *so, struct iovec *iov, int *np)
 	DEBUG_CALL("sopreprbuf");
 	DEBUG_ARG("so = %lx", (long )so);
 
-	if (len <= 0)
-		return 0;
+	if (len <= 0) {
+            if (np) {
+                *np = 0;
+            }
+            return 0;
+        }
 
 	iov[0].iov_base = sb->sb_wptr;
         iov[1].iov_base = NULL;
@@ -221,6 +225,9 @@ int soreadbuf(struct socket *so, const char *buf, int size)
 	 * No need to check if there's enough room to read.
 	 * soread wouldn't have been called if there weren't
 	 */
+        if (size <= 0) {
+            goto done;
+        }
 	if (sopreprbuf(so, iov, &n) < size)
         goto err;
 
