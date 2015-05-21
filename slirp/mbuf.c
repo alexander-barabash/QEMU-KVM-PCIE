@@ -155,7 +155,7 @@ m_inc(struct mbuf *m, int size)
 	int datasize;
 
 	/* some compiles throw up on gotos.  This one we can fake. */
-        if(m->m_size>size) return;
+        if(m->m_size - size > 0) return;
 
         if (m->m_flags & M_EXT) {
 	  datasize = m->m_data - m->m_ext;
