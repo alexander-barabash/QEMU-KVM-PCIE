@@ -177,7 +177,7 @@ all-obj-y += $(target-obj-y)
 all-obj-$(CONFIG_SOFTMMU) += $(block-obj-y)
 
 # build either PROG or PROGW
-$(QEMU_PROG_BUILD):  LDFLAGS += -Wl,--wrap=memcpy
+#$(QEMU_PROG_BUILD):  LDFLAGS += -Wl,--wrap=memcpy
 $(QEMU_PROG_BUILD): $(all-obj-y) ../libqemuutil.a ../libqemustub.a
 	$(call LINK,$^)
 
