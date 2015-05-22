@@ -28,6 +28,8 @@
 
 #ifdef _WIN64
 #define NORMAL_SIGSETJMP(jmp_env) _setjmp(jmp_env, NULL)
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
 #else
 #define NORMAL_SIGSETJMP(jmp_env) sigsetjmp(jmp_env, 0)
 #endif
@@ -350,6 +352,8 @@ int cpu_exec(CPUArchState *env)
 
     /* This must be volatile so it is not trashed by longjmp() */
     volatile bool have_tb_lock = false;
+
+    memset(&sc, 0, sizeof(sc));
 
     if (cpu->halted) {
         if (!cpu_has_work(cpu) && !rr_replay) {
@@ -934,3 +938,7 @@ int cpu_exec(CPUArchState *env)
     current_cpu = NULL;
     return ret;
 }
+
+#ifdef _WIN64
+#pragma GCC pop_options
+#endif
