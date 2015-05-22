@@ -3484,6 +3484,9 @@ static USBEndpoint *xhci_epid_to_usbep(XHCIState *xhci,
                                        unsigned int slotid, unsigned int epid)
 {
     assert(slotid >= 1 && slotid <= xhci->numslots);
+    if (unlikely(!(slotid >= 1 && slotid <= xhci->numslots))) {
+        return NULL;
+    }
 
     if (!xhci->slots[slotid - 1].uport) {
         return NULL;
