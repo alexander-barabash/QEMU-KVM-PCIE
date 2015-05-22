@@ -1166,6 +1166,8 @@ static void nbd_trip(void *opaque)
         return;
     }
 
+    memset(&request, 0, sizeof(request));
+
     req = nbd_request_get(client);
     ret = nbd_co_receive_request(req, &request);
     if (ret == -EAGAIN) {
