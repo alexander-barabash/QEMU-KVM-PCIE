@@ -161,6 +161,8 @@ soread(struct socket *so)
 	DEBUG_CALL("soread");
 	DEBUG_ARG("so = %lx", (long )so);
 
+        memset(&iov, 0, sizeof(iov));
+
 	/*
 	 * No need to check if there's enough room to read.
 	 * soread wouldn't have been called if there weren't
